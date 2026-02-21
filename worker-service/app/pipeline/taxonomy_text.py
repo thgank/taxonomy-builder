@@ -265,6 +265,7 @@ def extract_hearst_pairs(
     chunks: list[DocumentChunk],
     concept_set: set[str],
     lang: str = "en",
+    soft_mode: bool = False,
 ) -> list[dict[str, Any]]:
     if lang.startswith("en"):
         patterns = HEARST_PATTERNS_EN
@@ -295,7 +296,10 @@ def extract_hearst_pairs(
                     hyponym_raws = split_enumeration(g1)
 
                 if not _is_noun_phrase_candidate(hypernym_raw, nlp_model, allow_single=False):
-                    continue
+                    if not soft_mode:
+                        continue
+                    if len(tokenize(hypernym_raw)) < 2:
+                        continue
 
                 hypernym_clean = hypernym_raw
                 hypernym_exact = hypernym_clean in concept_set
@@ -311,7 +315,10 @@ def extract_hearst_pairs(
                     if not hypo_clean:
                         continue
                     if not _is_noun_phrase_candidate(hypo_clean, nlp_model, allow_single=True):
-                        continue
+                        if not soft_mode:
+                            continue
+                        if len(tokenize(hypo_clean)) < 1:
+                            continue
                     hypo_exact = hypo_clean in concept_set
                     if not hypo_exact:
                         hypo_match = find_closest_concept(hypo_clean, concept_set)
@@ -323,21 +330,22 @@ def extract_hearst_pairs(
                     if hypernym_clean == hypo_clean:
                         continue
                     overlap = _token_overlap_ratio(hypernym_clean, hypo_clean)
-                    if overlap < 0.2:
+                    min_overlap = 0.08 if soft_mode else 0.2
+                    if overlap < min_overlap:
                         continue
-                    if len(tokenize(hypernym_clean)) == 1 and len(tokenize(hypo_clean)) == 1:
+                    if not soft_mode and len(tokenize(hypernym_clean)) == 1 and len(tokenize(hypo_clean)) == 1:
                         continue
 
                     snippet_start = max(0, match.start() - 30)
                     snippet_end = min(len(text), match.end() + 30)
-                    score = 0.6
+                    score = 0.45 if soft_mode else 0.6
                     score += 0.1 if hypernym_exact else 0.03
                     score += 0.1 if hypo_exact else 0.03
                     if len(hypo_clean.split()) >= 2:
                         score += 0.05
                     if not hypernym_exact or not hypo_exact:
                         score -= 0.06
-                    score = min(score, 0.9)
+                    score = min(score, 0.82 if soft_mode else 0.9)
 
                     pairs.append({
                         "hypernym": hypernym_clean,
@@ -348,6 +356,7 @@ def extract_hearst_pairs(
                             "snippet": text[snippet_start:snippet_end],
                             "pattern": pattern_str[:50],
                             "method": "hearst",
+                            "confidence_tier": "soft" if soft_mode else "hard",
                         },
                     })
     return pairs

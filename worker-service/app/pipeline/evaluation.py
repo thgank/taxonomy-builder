@@ -25,6 +25,7 @@ from app.job_helper import (
     update_job_status, add_job_event, update_taxonomy_status, is_job_cancelled,
 )
 from app.logger import get_logger
+from app.pipeline.taxonomy_quality import compute_graph_quality
 from app.pipeline.taxonomy_text import is_low_quality_label
 
 log = get_logger(__name__)
@@ -192,6 +193,40 @@ def _compute_edge_confidence_stats(edges: list[TaxonomyEdge]) -> dict[str, Any]:
     }
 
 
+def _compute_graph_connectivity_metrics(
+    concepts: list[Concept],
+    edges: list[TaxonomyEdge],
+    candidate_concept_ids: set[str],
+) -> dict[str, Any]:
+    concept_by_id = {str(c.id): c for c in concepts}
+    edge_dicts_all: list[dict[str, str]] = []
+    edge_dicts_candidate: list[dict[str, str]] = []
+    for e in edges:
+        pid = str(e.parent_concept_id)
+        cid = str(e.child_concept_id)
+        parent = concept_by_id.get(pid)
+        child = concept_by_id.get(cid)
+        if not parent or not child:
+            continue
+        item = {"hypernym": parent.canonical, "hyponym": child.canonical}
+        edge_dicts_all.append(item)
+        if pid in candidate_concept_ids and cid in candidate_concept_ids:
+            edge_dicts_candidate.append(item)
+
+    all_report = compute_graph_quality(edge_dicts_all, len(concepts))
+    candidate_report = compute_graph_quality(edge_dicts_candidate, len(candidate_concept_ids))
+    return {
+        "all_concepts": {
+            "denominator": len(concepts),
+            **all_report,
+        },
+        "candidate_concepts": {
+            "denominator": len(candidate_concept_ids),
+            **candidate_report,
+        },
+    }
+
+
 def handle_evaluate(session: Session, msg: dict) -> None:
     """Evaluation handler: compute quality metrics and store on taxonomy version."""
     job_id = str(msg.get("jobId") or msg.get("job_id"))
@@ -261,9 +296,24 @@ def handle_evaluate(session: Session, msg: dict) -> None:
     )
     update_job_status(session, job_id, "RUNNING", progress=75)
 
+    # ── Graph connectivity metrics (same family as build quality gate) ──
+    graph_connectivity = _compute_graph_connectivity_metrics(
+        concepts,
+        edges,
+        candidate_concept_ids,
+    )
+    structural["largest_component_ratio"] = (
+        graph_connectivity.get("all_concepts", {}).get("largest_component_ratio", 0.0)
+    )
+    structural["hubness"] = graph_connectivity.get("all_concepts", {}).get("hubness", 0.0)
+    structural["lexical_noise_rate"] = (
+        graph_connectivity.get("all_concepts", {}).get("lexical_noise_rate", 0.0)
+    )
+
     # ── Compose quality report ───────────────────────────
     quality_metrics = {
         "structural": structural,
+        "graph_connectivity": graph_connectivity,
         "edge_confidence": edge_stats,
     }
 

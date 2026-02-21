@@ -104,6 +104,18 @@ BAD_TERM_PHRASES = {
     "үшін",
     "арқылы",
 }
+FUNCTIONAL_TERMS_EN = {
+    "for", "to", "from", "between", "after", "before", "during", "which", "when",
+    "while", "because", "including", "such", "some", "many",
+}
+FUNCTIONAL_TERMS_RU = {
+    "для", "между", "после", "до", "кроме", "того", "даже", "одна",
+    "является", "составляет", "представляют", "через", "при",
+}
+FUNCTIONAL_TERMS_KK = {
+    "үшін", "арқылы", "ретінде", "болып", "кезінде", "сияқты", "ететін",
+    "және", "мен", "немесе",
+}
 NOISE_TERM_PATTERNS = [
     re.compile(r"^(?:doi|isbn|issn|pmid)\b", re.IGNORECASE),
     re.compile(r"^[a-z]{1,2}\d+[a-z0-9]*$", re.IGNORECASE),
@@ -172,6 +184,43 @@ def _is_noise_term(term: str, nlp_model: Any = None) -> bool:
             doc = nlp_model(tokens[0])
             if doc and doc[0].pos_ in {"VERB", "AUX", "ADV", "ADP", "PRON", "DET"}:
                 return True
+        except Exception:
+            pass
+    return False
+
+
+def _functional_terms_for_lang(lang: str) -> set[str]:
+    l = (lang or "").lower()[:2]
+    if l == "ru":
+        return FUNCTIONAL_TERMS_RU
+    if l == "kk":
+        return FUNCTIONAL_TERMS_KK
+    return FUNCTIONAL_TERMS_EN
+
+
+def _is_functional_phrase(term: str, lang: str, nlp_model: Any = None) -> bool:
+    tokens = [t.lower() for t in TOKEN_RE.findall(term)]
+    if not tokens:
+        return True
+    functional_terms = _functional_terms_for_lang(lang)
+    if len(tokens) == 1 and tokens[0] in functional_terms:
+        return True
+    func_hits = sum(1 for t in tokens if t in functional_terms or t in STOPWORDS)
+    if len(tokens) >= 2 and (func_hits / len(tokens)) >= 0.6:
+        return True
+    if len(tokens) >= 2 and (tokens[0] in functional_terms or tokens[-1] in functional_terms):
+        return True
+    if nlp_model:
+        try:
+            doc = nlp_model(term)
+            useful = [t for t in doc if not t.is_punct and not t.is_space]
+            if useful:
+                noun_like = sum(1 for t in useful if t.pos_ in {"NOUN", "PROPN", "ADJ"})
+                func_like = sum(1 for t in useful if t.pos_ in {"VERB", "AUX", "ADP", "SCONJ", "CCONJ", "ADV"})
+                if len(useful) >= 2 and noun_like == 0:
+                    return True
+                if len(useful) >= 2 and func_like > noun_like:
+                    return True
         except Exception:
             pass
     return False
@@ -794,6 +843,11 @@ def handle_terms(session: Session, msg: dict) -> None:
             term,
             _load_spacy(term_lang_scores.get(term, (dominant_lang, 0.0))[0]),
         )
+        and not _is_functional_phrase(
+            term,
+            term_lang_scores.get(term, (dominant_lang, 0.0))[0],
+            _load_spacy(term_lang_scores.get(term, (dominant_lang, 0.0))[0]),
+        )
     }
     total_docs = max(1, len({str(c.document_id) for c in chunks}))
     term_doc_freq = _compute_term_doc_freq(list(deduped_scores.keys()), chunks)
@@ -813,6 +867,9 @@ def handle_terms(session: Session, msg: dict) -> None:
                 continue
             if toks[0] in BAD_SINGLE_TOKENS or _is_noise_token(toks[0]):
                 continue
+        term_lang = term_lang_scores.get(term, (dominant_lang, 0.0))[0]
+        if _is_functional_phrase(term, term_lang, _load_spacy(term_lang)):
+            continue
         q_score = _candidate_quality_score(
             term,
             base_norm_score=float(norm_refined.get(term, 0.0)),

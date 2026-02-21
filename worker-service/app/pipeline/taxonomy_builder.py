@@ -51,6 +51,70 @@ VERBISH_SUFFIXES = (
     "ing", "ed", "ize", "ise", "ать", "ять", "ить", "еть", "ться",
     "ған", "ген", "атын", "етін", "ып", "іп",
 )
+FUNCTIONAL_PARENT_TOKENS = {
+    "for", "to", "from", "between", "after", "before", "during", "which", "when", "while",
+    "для", "между", "после", "до", "кроме", "того", "даже", "одна", "через",
+    "үшін", "арқылы", "ретінде", "болып", "кезінде", "сияқты", "және", "мен",
+}
+
+
+def _percentile(values: list[float], p: float) -> float:
+    if not values:
+        return 0.0
+    if p <= 0:
+        return float(min(values))
+    if p >= 100:
+        return float(max(values))
+    xs = sorted(float(v) for v in values)
+    pos = (len(xs) - 1) * (p / 100.0)
+    lo = int(pos)
+    hi = min(lo + 1, len(xs) - 1)
+    frac = pos - lo
+    return float(xs[lo] * (1.0 - frac) + xs[hi] * frac)
+
+
+def _edge_method(edge: dict) -> str:
+    ev = edge.get("evidence", {})
+    if isinstance(ev, dict):
+        return str(ev.get("method", "unknown"))
+    if isinstance(ev, list):
+        for item in ev:
+            if isinstance(item, dict) and item.get("method"):
+                return str(item["method"])
+    return "unknown"
+
+
+def _adaptive_method_thresholds(
+    pairs: list[dict],
+    base_min_score: float,
+    percentile: float,
+) -> dict[str, float]:
+    by_method: dict[str, list[float]] = defaultdict(list)
+    for e in pairs:
+        by_method[_edge_method(e)].append(float(e.get("score", 0.0)))
+    out: dict[str, float] = {}
+    for method, scores in by_method.items():
+        if len(scores) < 4:
+            out[method] = base_min_score
+            continue
+        pscore = _percentile(scores, percentile)
+        out[method] = max(0.45, min(base_min_score, round(pscore, 4)))
+    return out
+
+
+def _edge_min_score(edge: dict, default_score: float, method_thresholds: dict[str, float]) -> float:
+    return float(method_thresholds.get(_edge_method(edge), default_score))
+
+
+def _adaptive_bridge_budget(
+    base_budget: int,
+    concept_count: int,
+    current_lcr: float,
+    target_lcr: float,
+) -> int:
+    gap = max(0.0, target_lcr - current_lcr)
+    adaptive = int(concept_count * (0.8 + (1.8 * gap)))
+    return max(base_budget, min(max(8, concept_count), adaptive))
 
 
 def _dedupe_pairs(pairs: list[dict]) -> list[dict]:
@@ -83,8 +147,7 @@ def _edge_rank_score(
     pt = TOKEN_RE.findall(parent.lower())
     ct = TOKEN_RE.findall(child.lower())
     score = base
-    if _is_valid_parent_label(parent, concept_doc_freq):
-        score += 0.08
+    score += 0.10 * _parent_validity_score(parent, concept_doc_freq)
     # Prefer parent not longer than child in taxonomy orientation.
     if len(pt) <= len(ct):
         score += 0.05
@@ -93,6 +156,51 @@ def _edge_rank_score(
     score += 0.02 * min(5, concept_doc_freq.get(parent, 0))
     score -= 0.01 * max(0, concept_doc_freq.get(child, 0) - concept_doc_freq.get(parent, 0))
     return score
+
+
+def _parent_validity_score(label: str, concept_doc_freq: dict[str, int]) -> float:
+    norm = " ".join(TOKEN_RE.findall((label or "").lower())).strip()
+    if not norm:
+        return 0.0
+    toks = norm.split()
+    score = 1.0
+    if norm in BAD_PARENT_PHRASES:
+        return 0.0
+    if any(phrase in norm for phrase in BAD_PARENT_PHRASES if " " in phrase):
+        score -= 0.50
+    functional_hits = sum(1 for t in toks if t in FUNCTIONAL_PARENT_TOKENS)
+    if toks:
+        score -= 0.45 * (functional_hits / len(toks))
+    if len(toks) == 1:
+        tok = toks[0]
+        if tok in BAD_PARENT_SINGLE_TOKENS:
+            score -= 0.70
+        if len(tok) < 4:
+            score -= 0.30
+        if concept_doc_freq.get(label, 0) < config.min_parent_doc_freq:
+            score -= 0.25
+    if len(toks) <= 2 and all(any(tok.endswith(s) for s in VERBISH_SUFFIXES) for tok in toks):
+        score -= 0.45
+    if len(toks) > 5:
+        score -= 0.25
+    return max(0.0, min(1.0, score))
+
+
+def _method_weight(method: str) -> float:
+    m = (method or "").lower()
+    if m == "hearst":
+        return 0.72
+    if m == "embedding_clustering":
+        return 0.64
+    if m == "embedding_clustering_secondary_parent":
+        return 0.60
+    if m == "embedding_clustering_relaxed":
+        return 0.56
+    if m == "component_bridge":
+        return 0.58
+    if m == "orphan_safe_link":
+        return 0.55
+    return 0.60
 
 
 def _collapse_bidirectional_pairs(
@@ -233,6 +341,8 @@ def _is_edge_plausible(
     child = edge["hyponym"]
     if not _is_valid_parent_label(parent, concept_doc_freq):
         return False
+    if _parent_validity_score(parent, concept_doc_freq) < 0.42:
+        return False
     if is_low_quality_label(parent) or is_low_quality_label(child):
         return False
     pt = TOKEN_RE.findall(parent.lower())
@@ -331,6 +441,10 @@ def handle_build(session: Session, msg: dict) -> None:
     min_parent_doc_freq = int(
         params.get("min_parent_doc_freq", config.min_parent_doc_freq)
     )
+    adaptive_edge_accept_percentile = float(params.get("adaptive_edge_accept_percentile", 25))
+    target_largest_component_ratio = float(
+        params.get("target_largest_component_ratio", quality_thresholds["min_largest_component_ratio"])
+    )
 
     concepts = (
         session.query(Concept)
@@ -370,14 +484,25 @@ def handle_build(session: Session, msg: dict) -> None:
 
     all_pairs: list[dict] = []
 
+    hearst_soft_mode = bool(params.get("hearst_soft_mode", True))
     if method in ("hearst", "hybrid"):
         hearst_pairs: list[dict] = []
+        hearst_soft_pairs: list[dict] = []
         for lang, group_chunks in lang_groups.items():
-            hearst_pairs.extend(extract_hearst_pairs(group_chunks, concept_set, lang))
+            hearst_pairs.extend(
+                extract_hearst_pairs(group_chunks, concept_set, lang, soft_mode=False)
+            )
+            if hearst_soft_mode:
+                hearst_soft_pairs.extend(
+                    extract_hearst_pairs(group_chunks, concept_set, lang, soft_mode=True)
+                )
+        if hearst_soft_pairs:
+            hearst_pairs.extend(hearst_soft_pairs)
         all_pairs.extend(hearst_pairs)
         add_job_event(
             session, job_id, "INFO",
-            f"Hearst patterns found {len(hearst_pairs)} relations across langs={dict(lang_counts)}",
+            f"Hearst patterns found {len(hearst_pairs)} relations across langs={dict(lang_counts)} "
+            f"(soft_mode={hearst_soft_mode})",
         )
         update_job_status(session, job_id, "RUNNING", progress=30)
 
@@ -432,17 +557,39 @@ def handle_build(session: Session, msg: dict) -> None:
     unique_pairs = remove_cycles(unique_pairs)
     unique_pairs = limit_depth(unique_pairs, max_depth)
     min_edge_accept_score = float(params.get("min_edge_accept_score", config.min_edge_accept_score))
+    method_thresholds = _adaptive_method_thresholds(
+        unique_pairs,
+        min_edge_accept_score,
+        adaptive_edge_accept_percentile,
+    )
     unique_pairs = [
-        e for e in unique_pairs if _is_edge_plausible(e, concept_doc_freq, min_edge_accept_score)
+        e
+        for e in unique_pairs
+        if _is_edge_plausible(
+            e,
+            concept_doc_freq,
+            _edge_min_score(e, min_edge_accept_score, method_thresholds),
+        )
     ]
+    add_job_event(
+        session,
+        job_id,
+        "INFO",
+        f"Adaptive edge accept thresholds: default={min_edge_accept_score:.2f}, "
+        f"per_method={method_thresholds}",
+    )
     for e in unique_pairs:
         base = float(e.get("score", 0.0))
         cooc = float(cooc_support.get((e["hypernym"], e["hyponym"]), 0.0))
-        composite = (0.75 * base) + (0.25 * cooc)
+        method_w = _method_weight(_edge_method(e))
+        parent_validity = _parent_validity_score(e["hypernym"], concept_doc_freq)
+        composite = (method_w * base) + (0.20 * cooc) + (0.18 * parent_validity)
+        composite = max(0.0, min(1.0, composite))
         e["score"] = round(composite, 4)
         ev = e.get("evidence", {})
         if isinstance(ev, dict):
             ev["cooccurrence_support"] = round(cooc, 4)
+            ev["parent_validity"] = round(parent_validity, 4)
             ev["composite_score"] = round(composite, 4)
             e["evidence"] = ev
     if orphan_linking_enabled:
@@ -452,6 +599,7 @@ def handle_build(session: Session, msg: dict) -> None:
             concept_labels,
             threshold=orphan_link_threshold,
             max_links=orphan_link_max_links,
+            parent_validator=lambda lbl: _parent_validity_score(lbl, concept_doc_freq),
             concept_doc_freq=concept_doc_freq,
             concept_scores=concept_scores,
             min_orphan_doc_freq=2,
@@ -461,7 +609,11 @@ def handle_build(session: Session, msg: dict) -> None:
             unique_pairs.extend(
                 [
                     e for e in orphan_links
-                    if _is_edge_plausible(e, concept_doc_freq, min_edge_accept_score)
+                    if _is_edge_plausible(
+                        e,
+                        concept_doc_freq,
+                        _edge_min_score(e, min_edge_accept_score, method_thresholds),
+                    )
                 ]
             )
             add_job_event(
@@ -480,6 +632,7 @@ def handle_build(session: Session, msg: dict) -> None:
                 concept_labels,
                 threshold=second_threshold,
                 max_links=max(5, orphan_link_max_links // 2),
+                parent_validator=lambda lbl: _parent_validity_score(lbl, concept_doc_freq),
                 concept_doc_freq=concept_doc_freq,
                 concept_scores=concept_scores,
                 min_orphan_doc_freq=2,
@@ -489,7 +642,11 @@ def handle_build(session: Session, msg: dict) -> None:
                 unique_pairs.extend(
                     [
                         e for e in extra_links
-                        if _is_edge_plausible(e, concept_doc_freq, min_edge_accept_score)
+                        if _is_edge_plausible(
+                            e,
+                            concept_doc_freq,
+                            _edge_min_score(e, min_edge_accept_score, method_thresholds),
+                        )
                     ]
                 )
                 add_job_event(
@@ -501,7 +658,7 @@ def handle_build(session: Session, msg: dict) -> None:
                 )
     if component_bridging_enabled:
         interim_quality = compute_graph_quality(unique_pairs, len(concepts))
-        if interim_quality["largest_component_ratio"] >= 0.55:
+        if interim_quality["largest_component_ratio"] >= max(0.55, target_largest_component_ratio):
             component_bridging_enabled = False
             add_job_event(
                 session,
@@ -510,25 +667,54 @@ def handle_build(session: Session, msg: dict) -> None:
                 "Component bridging skipped (graph already sufficiently connected)",
             )
     if component_bridging_enabled:
-        effective_bridge_threshold = max(component_bridge_threshold, 0.62)
-        effective_bridge_max_links = min(component_bridge_max_links, max(6, len(concepts) // 10))
-        bridges = bridge_components(
-            unique_pairs,
-            threshold=effective_bridge_threshold,
-            max_links=effective_bridge_max_links,
-            concept_labels=[c.canonical for c in concepts],
-        )
-        if bridges:
-            unique_pairs.extend(
-                [e for e in bridges if _is_edge_plausible(e, concept_doc_freq, min_edge_accept_score)]
+        concept_labels = [c.canonical for c in concepts]
+        effective_bridge_threshold = component_bridge_threshold
+        for pass_idx in range(1, 4):
+            interim_quality = compute_graph_quality(unique_pairs, len(concepts))
+            if interim_quality["largest_component_ratio"] >= target_largest_component_ratio:
+                break
+            bridge_budget = _adaptive_bridge_budget(
+                base_budget=component_bridge_max_links,
+                concept_count=len(concepts),
+                current_lcr=interim_quality["largest_component_ratio"],
+                target_lcr=target_largest_component_ratio,
             )
+            bridges = bridge_components(
+                unique_pairs,
+                threshold=effective_bridge_threshold,
+                max_links=bridge_budget,
+                concept_labels=concept_labels,
+                parent_validator=lambda lbl: _parent_validity_score(lbl, concept_doc_freq),
+                min_lexical_similarity=max(
+                    0.16,
+                    float(config.min_bridge_lexical_similarity) - (0.04 * (pass_idx - 1)),
+                ),
+                min_semantic_similarity=max(
+                    0.62,
+                    float(config.min_bridge_semantic_similarity) - (0.08 * (pass_idx - 1)),
+                ),
+            )
+            accepted_bridges = [
+                e
+                for e in bridges
+                if _is_edge_plausible(
+                    e,
+                    concept_doc_freq,
+                    _edge_min_score(e, min_edge_accept_score, method_thresholds),
+                )
+            ]
+            if not accepted_bridges:
+                effective_bridge_threshold = max(0.48, effective_bridge_threshold - 0.04)
+                continue
+            unique_pairs.extend(accepted_bridges)
             add_job_event(
                 session,
                 job_id,
                 "INFO",
-                f"Component bridging added {len(bridges)} edges "
-                f"(threshold={effective_bridge_threshold:.2f})",
+                f"Component bridging pass {pass_idx} added {len(accepted_bridges)} edges "
+                f"(threshold={effective_bridge_threshold:.2f}, budget={bridge_budget})",
             )
+            effective_bridge_threshold = max(0.48, effective_bridge_threshold - 0.03)
 
     unique_pairs = _dedupe_pairs(unique_pairs)
     unique_pairs = _collapse_bidirectional_pairs(unique_pairs, concept_doc_freq)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from difflib import SequenceMatcher
+from typing import Callable
 
 from app.config import config
 from app.pipeline.taxonomy_text import is_low_quality_label, tokenize
@@ -25,6 +26,7 @@ def safe_link_orphans(
     concept_labels: list[str],
     threshold: float,
     max_links: int,
+    parent_validator: Callable[[str], float] | None = None,
     concept_doc_freq: dict[str, int] | None = None,
     concept_scores: dict[str, float] | None = None,
     min_orphan_doc_freq: int = 2,
@@ -70,6 +72,8 @@ def safe_link_orphans(
         for parent in parent_candidates:
             if parent == orphan:
                 continue
+            if parent_validator and parent_validator(parent) < 0.45:
+                continue
             sim = _label_similarity(parent, orphan)
             if sim < threshold:
                 continue
@@ -103,13 +107,16 @@ def safe_link_orphans(
     return added
 
 
-def _connected_components(edges: list[dict]) -> list[set[str]]:
+def _connected_components(edges: list[dict], nodes: list[str] | None = None) -> list[set[str]]:
     adjacency: dict[str, set[str]] = defaultdict(set)
     for e in edges:
         p = e["hypernym"]
         c = e["hyponym"]
         adjacency[p].add(c)
         adjacency[c].add(p)
+    if nodes:
+        for n in nodes:
+            adjacency.setdefault(n, set())
 
     visited: set[str] = set()
     comps: list[set[str]] = []
@@ -135,10 +142,13 @@ def bridge_components(
     threshold: float,
     max_links: int,
     concept_labels: list[str] | None = None,
+    parent_validator: Callable[[str], float] | None = None,
+    min_lexical_similarity: float | None = None,
+    min_semantic_similarity: float | None = None,
 ) -> list[dict]:
     if max_links <= 0:
         return []
-    comps = _connected_components(edges)
+    comps = _connected_components(edges, nodes=concept_labels or [])
     if len(comps) <= 1:
         return []
 
@@ -176,6 +186,16 @@ def bridge_components(
 
     links: list[dict] = []
     used_pairs: set[tuple[str, str]] = set()
+    lexical_floor = (
+        float(min_lexical_similarity)
+        if min_lexical_similarity is not None
+        else float(config.min_bridge_lexical_similarity)
+    )
+    semantic_floor = (
+        float(min_semantic_similarity)
+        if min_semantic_similarity is not None
+        else float(config.min_bridge_semantic_similarity)
+    )
     for i in range(len(reps)):
         for j in range(i + 1, len(reps)):
             a = reps[i]
@@ -185,12 +205,22 @@ def bridge_components(
             sim = max(lexical_sim, (0.35 * lexical_sim) + (0.65 * semantic_sim))
             if sim < threshold:
                 continue
-            if lexical_sim < config.min_bridge_lexical_similarity:
+            if lexical_sim < lexical_floor:
                 continue
-            if semantic_sim < config.min_bridge_semantic_similarity:
+            if semantic_sim < semantic_floor:
                 continue
-            # Orient edge: shorter term is parent proxy.
-            parent, child = (a, b) if len(tokenize(a)) <= len(tokenize(b)) else (b, a)
+            # Orient edge: prefer label with higher parent-validity, fallback to shorter term.
+            if parent_validator:
+                a_valid = parent_validator(a)
+                b_valid = parent_validator(b)
+                if abs(a_valid - b_valid) >= 0.08:
+                    parent, child = (a, b) if a_valid >= b_valid else (b, a)
+                else:
+                    parent, child = (a, b) if len(tokenize(a)) <= len(tokenize(b)) else (b, a)
+                if parent_validator(parent) < 0.40:
+                    continue
+            else:
+                parent, child = (a, b) if len(tokenize(a)) <= len(tokenize(b)) else (b, a)
             if parent == child:
                 continue
             k = (parent, child)

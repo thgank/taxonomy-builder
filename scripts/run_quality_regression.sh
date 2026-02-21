@@ -95,7 +95,7 @@ if [ "$final_status" != "SUCCESS" ]; then
 fi
 
 curl -fsS "$BASE_URL/api/jobs/$JOB_ID/events" -H "X-API-Key: $API_KEY" > /tmp/taxonomy_job_events.json
-curl -fsS "$BASE_URL/api/taxonomies/$TAXONOMY_ID:export?format=json&include_orphans=true" -H "X-API-Key: $API_KEY" > /tmp/taxonomy_export_current.json
+curl -fsS "$BASE_URL/api/taxonomies/$TAXONOMY_ID/export?format=json&include_orphans=true" -H "X-API-Key: $API_KEY" > /tmp/taxonomy_export_current.json
 curl -fsS "$BASE_URL/api/taxonomies/$TAXONOMY_ID" -H "X-API-Key: $API_KEY" > /tmp/taxonomy_version_current.json
 
 python3 - <<'PY'

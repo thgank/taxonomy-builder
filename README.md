@@ -256,11 +256,11 @@ curl "http://localhost:8080/api/taxonomies/{TAX_ID}/concepts/{CONCEPT_ID}" \
 
 ```bash
 # JSON
-curl "http://localhost:8080/api/taxonomies/{TAX_ID}:export?format=json" \
+curl "http://localhost:8080/api/taxonomies/{TAX_ID}/export?format=json" \
   -H "X-API-Key: dev-api-key-change-me"
 
 # CSV
-curl "http://localhost:8080/api/taxonomies/{TAX_ID}:export?format=csv" \
+curl "http://localhost:8080/api/taxonomies/{TAX_ID}/export?format=csv" \
   -H "X-API-Key: dev-api-key-change-me" \
   -o taxonomy.csv
 ```

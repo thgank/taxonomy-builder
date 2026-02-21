@@ -36,7 +36,7 @@ public class TaxonomyController {
         return taxonomyService.findVersionsByCollection(id);
     }
 
-    @GetMapping("/api/taxonomies/{taxId}")
+    @GetMapping("/api/taxonomies/{taxId:[0-9a-fA-F\\-]{36}}")
     @Operation(summary = "Get taxonomy version metadata")
     public TaxonomyVersionResponse getVersion(@PathVariable UUID taxId) {
         return taxonomyService.findVersionById(taxId);
@@ -44,7 +44,7 @@ public class TaxonomyController {
 
     /* ── Tree ────────────────────────────────────────────── */
 
-    @GetMapping("/api/taxonomies/{taxId}/tree")
+    @GetMapping("/api/taxonomies/{taxId:[0-9a-fA-F\\-]{36}}/tree")
     @Operation(summary = "Get taxonomy as a tree (root nodes + children)")
     public TaxonomyTreeResponse getTree(@PathVariable UUID taxId) {
         return taxonomyService.getTree(taxId);
@@ -52,13 +52,13 @@ public class TaxonomyController {
 
     /* ── Edges ───────────────────────────────────────────── */
 
-    @GetMapping("/api/taxonomies/{taxId}/edges")
+    @GetMapping("/api/taxonomies/{taxId:[0-9a-fA-F\\-]{36}}/edges")
     @Operation(summary = "List taxonomy edges (paginated)")
     public Page<TaxonomyEdgeResponse> getEdges(@PathVariable UUID taxId, Pageable pageable) {
         return taxonomyService.getEdges(taxId, pageable);
     }
 
-    @PostMapping("/api/taxonomies/{taxId}/edges")
+    @PostMapping("/api/taxonomies/{taxId:[0-9a-fA-F\\-]{36}}/edges")
     @ResponseStatus(HttpStatus.CREATED)
     @Operation(summary = "Add an edge manually (semi-automatic)")
     public TaxonomyEdgeResponse addEdge(@PathVariable UUID taxId,
@@ -66,14 +66,14 @@ public class TaxonomyController {
         return taxonomyService.addEdge(taxId, req);
     }
 
-    @DeleteMapping("/api/taxonomies/{taxId}/edges/{edgeId}")
+    @DeleteMapping("/api/taxonomies/{taxId:[0-9a-fA-F\\-]{36}}/edges/{edgeId:[0-9a-fA-F\\-]{36}}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     @Operation(summary = "Delete an edge")
     public void deleteEdge(@PathVariable UUID taxId, @PathVariable UUID edgeId) {
         taxonomyService.deleteEdge(taxId, edgeId);
     }
 
-    @PatchMapping("/api/taxonomies/{taxId}/edges/{edgeId}")
+    @PatchMapping("/api/taxonomies/{taxId:[0-9a-fA-F\\-]{36}}/edges/{edgeId:[0-9a-fA-F\\-]{36}}")
     @Operation(summary = "Update edge score / approval")
     public TaxonomyEdgeResponse updateEdge(@PathVariable UUID taxId,
                                            @PathVariable UUID edgeId,
@@ -83,7 +83,7 @@ public class TaxonomyController {
 
     /* ── Concepts ────────────────────────────────────────── */
 
-    @GetMapping("/api/taxonomies/{taxId}/concepts/search")
+    @GetMapping("/api/taxonomies/{taxId:[0-9a-fA-F\\-]{36}}/concepts/search")
     @Operation(summary = "Search concepts by canonical name")
     public Page<ConceptResponse> searchConcepts(
             @PathVariable UUID taxId,
@@ -92,7 +92,7 @@ public class TaxonomyController {
         return taxonomyService.searchConcepts(taxId, query, pageable);
     }
 
-    @GetMapping("/api/taxonomies/{taxId}/concepts/{conceptId}")
+    @GetMapping("/api/taxonomies/{taxId:[0-9a-fA-F\\-]{36}}/concepts/{conceptId:[0-9a-fA-F\\-]{36}}")
     @Operation(summary = "Get concept detail with parents, children, evidence")
     public ConceptDetailResponse getConceptDetail(
             @PathVariable UUID taxId,
@@ -102,7 +102,7 @@ public class TaxonomyController {
 
     /* ── Export ───────────────────────────────────────────── */
 
-    @GetMapping({"/api/taxonomies/{taxId}/export", "/api/taxonomies/{taxId}:export"})
+    @GetMapping("/api/taxonomies/{taxId:[0-9a-fA-F\\-]{36}}/export")
     @Operation(summary = "Export taxonomy as JSON or CSV")
     public ResponseEntity<?> export(
             @PathVariable UUID taxId,
