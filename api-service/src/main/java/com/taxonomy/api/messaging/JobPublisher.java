@@ -16,29 +16,12 @@ public class JobPublisher {
         this.rabbitTemplate = rabbitTemplate;
     }
 
-    public void publishImport(PipelineMessage message) {
-        publish(RabbitConfig.RK_IMPORT, message);
-    }
-
-    public void publishNlp(PipelineMessage message) {
-        publish(RabbitConfig.RK_NLP, message);
-    }
-
-    public void publishTerms(PipelineMessage message) {
-        publish(RabbitConfig.RK_TERMS, message);
-    }
-
-    public void publishBuild(PipelineMessage message) {
-        publish(RabbitConfig.RK_BUILD, message);
-    }
-
-    public void publishEvaluate(PipelineMessage message) {
-        publish(RabbitConfig.RK_EVALUATE, message);
-    }
-
-    private void publish(String routingKey, PipelineMessage message) {
-        log.info("Publishing to {}: jobId={}, correlationId={}",
-                routingKey, message.jobId(), message.correlationId());
+    /**
+     * Publish a pipeline message to the given routing key (stage name).
+     */
+    public void publish(String routingKey, PipelineMessage message) {
+        log.info("Publishing to {}: jobId={}, jobType={}, correlationId={}",
+                routingKey, message.jobId(), message.jobType(), message.correlationId());
         rabbitTemplate.convertAndSend(RabbitConfig.EXCHANGE, routingKey, message);
     }
 }

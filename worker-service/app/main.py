@@ -15,6 +15,7 @@ from app.pipeline.ingestion import handle_import
 from app.pipeline.nlp import handle_nlp
 from app.pipeline.term_extraction import handle_terms
 from app.pipeline.taxonomy_builder import handle_build
+from app.pipeline.evaluation import handle_evaluate
 
 log = get_logger(__name__)
 
@@ -36,13 +37,14 @@ def main() -> None:
     log.info("Health endpoint started on port %d", config.health_port)
 
     # Define pipeline handlers:
-    # queue_name → (handler_function, next_routing_key_or_None)
-    # For FULL_PIPELINE flow: import → nlp → terms → build
+    # queue_name → handler_function
+    # Routing to next stage is handled by consumer.py based on jobType
     handlers = {
-        config.queue_import: (handle_import, "nlp"),
-        config.queue_nlp:    (handle_nlp,    "terms"),
-        config.queue_terms:  (handle_terms,  "build"),
-        config.queue_build:  (handle_build,  None),  # terminal step
+        config.queue_import:   handle_import,
+        config.queue_nlp:      handle_nlp,
+        config.queue_terms:    handle_terms,
+        config.queue_build:    handle_build,
+        config.queue_evaluate: handle_evaluate,
     }
 
     # This blocks forever

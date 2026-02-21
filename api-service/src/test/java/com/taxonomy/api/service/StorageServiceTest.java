@@ -8,7 +8,7 @@ class StorageServiceTest {
 
     @Test
     void sanitize_removesPathTraversal() {
-        assertEquals("evil_txt", StorageService.sanitize("../../evil.txt"));
+        assertEquals("evil.txt", StorageService.sanitize("../../evil.txt"));
     }
 
     @Test

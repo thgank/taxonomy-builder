@@ -46,6 +46,9 @@ public class TaxonomyEdge {
     @Column(columnDefinition = "jsonb")
     private List<Map<String, Object>> evidence = new ArrayList<>();
 
+    @Column
+    private Boolean approved;
+
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)
     private Instant createdAt;

@@ -1,0 +1,47 @@
+#!/bin/sh
+
+set -eu
+
+BASE_DIR=$(
+  cd "$(dirname "$0")"
+  pwd -P
+)
+
+WRAPPER_DIR="$BASE_DIR/.mvn/wrapper"
+PROPS_FILE="$WRAPPER_DIR/maven-wrapper.properties"
+
+if [ ! -f "$PROPS_FILE" ]; then
+  echo "Missing $PROPS_FILE" >&2
+  exit 1
+fi
+
+DIST_URL=$(grep '^distributionUrl=' "$PROPS_FILE" | cut -d'=' -f2- | sed 's/\\:/:/g')
+if [ -z "$DIST_URL" ]; then
+  echo "distributionUrl is not set in $PROPS_FILE" >&2
+  exit 1
+fi
+
+DIST_ARCHIVE=$(basename "$DIST_URL")
+DIST_NAME=${DIST_ARCHIVE%-bin.tar.gz}
+MAVEN_HOME="$WRAPPER_DIR/$DIST_NAME"
+MVN_BIN="$MAVEN_HOME/bin/mvn"
+
+if [ ! -x "$MVN_BIN" ]; then
+  TMP_ARCHIVE="$WRAPPER_DIR/$DIST_ARCHIVE"
+  mkdir -p "$WRAPPER_DIR"
+
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL "$DIST_URL" -o "$TMP_ARCHIVE"
+  elif command -v wget >/dev/null 2>&1; then
+    wget -q "$DIST_URL" -O "$TMP_ARCHIVE"
+  else
+    echo "Neither curl nor wget found; cannot download Maven distribution." >&2
+    exit 1
+  fi
+
+  rm -rf "$MAVEN_HOME"
+  tar -xzf "$TMP_ARCHIVE" -C "$WRAPPER_DIR"
+  rm -f "$TMP_ARCHIVE"
+fi
+
+exec "$MVN_BIN" "$@"

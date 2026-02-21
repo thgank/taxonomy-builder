@@ -21,6 +21,8 @@ def update_job_status(
     status: str,
     progress: int | None = None,
     error_message: str | None = None,
+    current_stage: str | None = None,
+    retry_count: int | None = None,
 ) -> None:
     job = session.query(Job).filter(Job.id == job_id).first()
     if not job:
@@ -32,6 +34,10 @@ def update_job_status(
         job.progress = progress
     if error_message:
         job.error_message = error_message
+    if current_stage:
+        job.current_stage = current_stage
+    if retry_count is not None:
+        job.retry_count = retry_count
 
     now = datetime.now(timezone.utc)
     if status == "RUNNING" and not job.started_at:
@@ -40,7 +46,10 @@ def update_job_status(
         job.finished_at = now
 
     session.commit()
-    log.info("Job %s → %s (progress=%s)", job_id, status, progress)
+    log.info(
+        "Job %s → %s (progress=%s, stage=%s, retries=%s)",
+        job_id, status, progress, current_stage, retry_count,
+    )
 
 
 def add_job_event(

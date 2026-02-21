@@ -344,7 +344,7 @@ def handle_build(session: Session, msg: dict) -> None:
     if not concepts:
         add_job_event(session, job_id, "WARN", "No concepts found — skipping build")
         update_taxonomy_status(session, taxonomy_version_id, "READY")
-        update_job_status(session, job_id, "SUCCESS", progress=100)
+        update_job_status(session, job_id, "RUNNING", progress=100)
         return
 
     concept_set = {c.canonical for c in concepts}
@@ -396,7 +396,7 @@ def handle_build(session: Session, msg: dict) -> None:
     if not all_pairs:
         add_job_event(session, job_id, "WARN", "No taxonomy relations found")
         update_taxonomy_status(session, taxonomy_version_id, "READY")
-        update_job_status(session, job_id, "SUCCESS", progress=100)
+        update_job_status(session, job_id, "RUNNING", progress=100)
         return
 
     # ── Deduplicate pairs ────────────────────────────────
@@ -457,11 +457,11 @@ def handle_build(session: Session, msg: dict) -> None:
 
     # ── Finalize ─────────────────────────────────────────
     update_taxonomy_status(session, taxonomy_version_id, "READY")
-    update_job_status(session, job_id, "SUCCESS", progress=100)
     add_job_event(
         session, job_id, "INFO",
         f"Taxonomy build complete: {stored} edges, method={method}",
     )
+    update_job_status(session, job_id, "RUNNING", progress=100)
     log.info(
         "Taxonomy build complete: collection=%s version=%s edges=%d",
         collection_id, taxonomy_version_id, stored,

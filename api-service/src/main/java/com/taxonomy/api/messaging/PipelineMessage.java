@@ -7,15 +7,18 @@ public record PipelineMessage(
         UUID jobId,
         UUID collectionId,
         UUID taxonomyVersionId,
+        String jobType,
         Map<String, Object> params,
         String correlationId,
         String traceId
 ) {
     public static PipelineMessage of(UUID jobId, UUID collectionId,
                                      UUID taxonomyVersionId,
-                                     Map<String, Object> params) {
-        String traceId = UUID.randomUUID().toString();
+                                     String jobType,
+                                     Map<String, Object> params,
+                                     String correlationId,
+                                     String traceId) {
         return new PipelineMessage(jobId, collectionId, taxonomyVersionId,
-                params, traceId, traceId);
+                jobType, params, correlationId, traceId);
     }
 }

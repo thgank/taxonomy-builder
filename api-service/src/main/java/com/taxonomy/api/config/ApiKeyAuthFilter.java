@@ -9,6 +9,8 @@ import org.springframework.security.web.authentication.preauth.PreAuthenticatedA
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.util.List;
 
 public class ApiKeyAuthFilter extends OncePerRequestFilter {
@@ -28,7 +30,7 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
 
         String providedKey = request.getHeader(HEADER);
 
-        if (expectedKey.equals(providedKey)) {
+        if (providedKey != null && timingSafeEquals(expectedKey, providedKey)) {
             var auth = new PreAuthenticatedAuthenticationToken(
                     "api-user", null, List.of());
             var ctx = SecurityContextHolder.createEmptyContext();
@@ -37,5 +39,14 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
         }
 
         filterChain.doFilter(request, response);
+    }
+
+    /**
+     * Constant-time comparison to prevent timing attacks on API key.
+     */
+    private static boolean timingSafeEquals(String expected, String provided) {
+        byte[] a = expected.getBytes(StandardCharsets.UTF_8);
+        byte[] b = provided.getBytes(StandardCharsets.UTF_8);
+        return MessageDigest.isEqual(a, b);
     }
 }

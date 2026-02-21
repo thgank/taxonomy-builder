@@ -39,6 +39,10 @@ public class TaxonomyVersion {
     @Column(nullable = false)
     private TaxonomyStatus status = TaxonomyStatus.NEW;
 
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "quality_metrics", columnDefinition = "jsonb")
+    private Map<String, Object> qualityMetrics = new HashMap<>();
+
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)
     private Instant createdAt;

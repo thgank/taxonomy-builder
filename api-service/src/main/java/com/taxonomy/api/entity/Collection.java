@@ -28,6 +28,10 @@ public class Collection {
     @Column(name = "created_at", updatable = false)
     private Instant createdAt;
 
+    @OneToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "active_job_id")
+    private Job activeJob;
+
     public Collection(String name, String description) {
         this.name = name;
         this.description = description;

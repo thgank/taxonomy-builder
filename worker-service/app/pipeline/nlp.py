@@ -91,7 +91,7 @@ def handle_nlp(session: Session, msg: dict) -> None:
     lang_counts: dict[str, int] = {}
 
     for idx, chunk in enumerate(all_chunks):
-        if is_job_cancelled(session, job_id):
+        if idx % 200 == 0 and is_job_cancelled(session, job_id):
             return
 
         # Detect language if not set
@@ -101,7 +101,7 @@ def handle_nlp(session: Session, msg: dict) -> None:
 
         lang_counts[chunk.lang] = lang_counts.get(chunk.lang, 0) + 1
 
-        if (idx + 1) % 50 == 0:
+        if (idx + 1) % 100 == 0:
             session.commit()
             progress = int(((idx + 1) / total) * 100)
             update_job_status(session, job_id, "RUNNING", progress=progress)

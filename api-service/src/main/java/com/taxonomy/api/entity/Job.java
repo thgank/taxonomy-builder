@@ -43,6 +43,18 @@ public class Job {
     @Column(name = "error_message", columnDefinition = "TEXT")
     private String errorMessage;
 
+    @Column(name = "current_stage", length = 32)
+    private String currentStage;
+
+    @Column(name = "retry_count", nullable = false)
+    private Integer retryCount = 0;
+
+    @Column(name = "correlation_id", length = 64)
+    private String correlationId;
+
+    @Column(name = "trace_id", length = 64)
+    private String traceId;
+
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)
     private Instant createdAt;

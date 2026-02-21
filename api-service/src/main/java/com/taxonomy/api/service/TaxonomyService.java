@@ -108,10 +108,27 @@ public class TaxonomyService {
     @Transactional
     public TaxonomyEdgeResponse addEdge(UUID taxId, CreateEdgeRequest req) {
         var version = getVersionEntity(taxId);
+        UUID collectionId = version.getCollection().getId();
+
         var parent = conceptRepo.findById(req.parentConceptId())
                 .orElseThrow(() -> new ResourceNotFoundException("Concept", req.parentConceptId()));
         var child = conceptRepo.findById(req.childConceptId())
                 .orElseThrow(() -> new ResourceNotFoundException("Concept", req.childConceptId()));
+
+        // ── Cross-collection guard ──
+        if (!parent.getCollection().getId().equals(collectionId)) {
+            throw new IllegalArgumentException(
+                    "Parent concept " + parent.getId() + " belongs to a different collection");
+        }
+        if (!child.getCollection().getId().equals(collectionId)) {
+            throw new IllegalArgumentException(
+                    "Child concept " + child.getId() + " belongs to a different collection");
+        }
+
+        // ── Self-loop guard ──
+        if (req.parentConceptId().equals(req.childConceptId())) {
+            throw new IllegalArgumentException("Cannot create a self-referencing edge");
+        }
 
         var edge = new TaxonomyEdge();
         edge.setTaxonomyVersion(version);
@@ -120,6 +137,7 @@ public class TaxonomyService {
         edge.setRelation(req.relation() != null ? req.relation() : "is_a");
         edge.setScore(req.score() != null ? req.score() : 1.0);
         edge.setEvidence(List.of(Map.of("source", "manual")));
+        edge.setApproved(true);
         edge = edgeRepo.save(edge);
         return toEdgeResponse(edge);
     }
@@ -145,6 +163,7 @@ public class TaxonomyService {
             edge.setScore(req.score());
         }
         if (req.approved() != null) {
+            edge.setApproved(req.approved());
             List<Map<String, Object>> ev = new ArrayList<>(edge.getEvidence());
             ev.add(Map.of("approved", req.approved(), "ts", System.currentTimeMillis()));
             edge.setEvidence(ev);

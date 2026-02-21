@@ -45,6 +45,7 @@ class Collection(Base):
     name = Column(String(255), nullable=False)
     description = Column(Text)
     created_at = Column(DateTime(timezone=True), default=utcnow)
+    active_job_id = Column(UUID(as_uuid=True), ForeignKey("jobs.id", use_alter=True))
 
 
 # ── Documents ────────────────────────────────────────────
@@ -120,6 +121,7 @@ class TaxonomyVersion(Base):
     algorithm = Column(String(64), nullable=False, default="hybrid")
     parameters = Column(JSONB, default=dict)
     status = Column(String(16), nullable=False, default="NEW")
+    quality_metrics = Column(JSONB, default=dict)
     created_at = Column(DateTime(timezone=True), default=utcnow)
     finished_at = Column(DateTime(timezone=True))
 
@@ -137,6 +139,7 @@ class TaxonomyEdge(Base):
     relation = Column(String(32), nullable=False, default="is_a")
     score = Column(Float, nullable=False, default=0.0)
     evidence = Column(JSONB, default=list)
+    approved = Column("approved", type_=Boolean)
     created_at = Column(DateTime(timezone=True), default=utcnow)
 
     taxonomy_version = relationship("TaxonomyVersion")
@@ -155,6 +158,10 @@ class Job(Base):
     status = Column(String(16), nullable=False, default="QUEUED")
     progress = Column(Integer, nullable=False, default=0)
     error_message = Column(Text)
+    current_stage = Column(String(32))
+    retry_count = Column(Integer, nullable=False, default=0)
+    correlation_id = Column(String(64))
+    trace_id = Column(String(64))
     created_at = Column(DateTime(timezone=True), default=utcnow)
     started_at = Column(DateTime(timezone=True))
     finished_at = Column(DateTime(timezone=True))
@@ -176,3 +183,17 @@ class JobEvent(Base):
 
 def get_session() -> Session:
     return SessionLocal()
+
+
+# ── Dead Letter Log ──────────────────────────────────────
+
+class DeadLetterLog(Base):
+    __tablename__ = "dead_letter_log"
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    job_id = Column(UUID(as_uuid=True), ForeignKey("jobs.id"))
+    queue_name = Column(String(128), nullable=False)
+    routing_key = Column(String(128))
+    payload = Column(JSONB, default=dict)
+    error_message = Column(Text)
+    retry_count = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
