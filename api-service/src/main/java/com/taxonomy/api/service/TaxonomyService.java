@@ -81,14 +81,15 @@ public class TaxonomyService {
             Set<UUID> visited) {
 
         if (visited.contains(conceptId)) return null; // cycle guard
-        visited.add(conceptId);
 
         Concept concept = conceptRepo.findById(conceptId).orElse(null);
         if (concept == null) return null;
 
+        Set<UUID> nextVisited = new HashSet<>(visited);
+        nextVisited.add(conceptId);
         List<TaxonomyEdge> childEdges = childrenMap.getOrDefault(conceptId, List.of());
         List<TaxonomyTreeResponse.TreeNode> children = childEdges.stream()
-                .map(e -> buildTreeNode(e.getChildConcept().getId(), childrenMap, visited))
+                .map(e -> buildTreeNode(e.getChildConcept().getId(), childrenMap, nextVisited))
                 .filter(Objects::nonNull)
                 .toList();
 
@@ -184,6 +185,9 @@ public class TaxonomyService {
         var version = getVersionEntity(taxId);
         var concept = conceptRepo.findById(conceptId)
                 .orElseThrow(() -> new ResourceNotFoundException("Concept", conceptId));
+        if (!concept.getCollection().getId().equals(version.getCollection().getId())) {
+            throw new IllegalArgumentException("Concept does not belong to this taxonomy collection");
+        }
 
         // Parents: edges where this concept is the child
         var parentEdges = edgeRepo.findByTaxonomyVersionIdAndChildConceptId(taxId, conceptId);
@@ -222,6 +226,10 @@ public class TaxonomyService {
     /* ── Export ───────────────────────────────────────────── */
 
     public TaxonomyExportResponse export(UUID taxId) {
+        return export(taxId, false);
+    }
+
+    public TaxonomyExportResponse export(UUID taxId, boolean includeOrphans) {
         var version = getVersionEntity(taxId);
         var edges = edgeRepo.findByTaxonomyVersionId(taxId);
 
@@ -230,6 +238,10 @@ public class TaxonomyService {
         for (var e : edges) {
             conceptIds.add(e.getParentConcept().getId());
             conceptIds.add(e.getChildConcept().getId());
+        }
+        if (includeOrphans) {
+            conceptRepo.findByCollectionId(version.getCollection().getId())
+                    .forEach(c -> conceptIds.add(c.getId()));
         }
 
         List<TaxonomyExportResponse.ExportNode> nodes = conceptIds.stream()
@@ -283,6 +295,7 @@ public class TaxonomyService {
         return new TaxonomyVersionResponse(
                 v.getId(), v.getCollection().getId(),
                 v.getAlgorithm(), v.getParameters(),
+                v.getQualityMetrics(),
                 v.getStatus().name(),
                 v.getCreatedAt(), v.getFinishedAt(),
                 edgeCount, conceptCount

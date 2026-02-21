@@ -19,12 +19,13 @@ from sqlalchemy.orm import Session
 
 from app.config import config
 from app.db import (
-    Concept, TaxonomyEdge, TaxonomyVersion, Document, DocumentChunk,
+    Concept, ConceptOccurrence, TaxonomyEdge, TaxonomyVersion, Document, DocumentChunk,
 )
 from app.job_helper import (
     update_job_status, add_job_event, update_taxonomy_status, is_job_cancelled,
 )
 from app.logger import get_logger
+from app.pipeline.taxonomy_text import is_low_quality_label
 
 log = get_logger(__name__)
 
@@ -32,6 +33,7 @@ log = get_logger(__name__)
 def _compute_structural_metrics(
     concepts: list[Concept],
     edges: list[TaxonomyEdge],
+    candidate_concept_ids: set[str] | None = None,
 ) -> dict[str, Any]:
     """Compute structural quality metrics for the taxonomy tree."""
     if not concepts:
@@ -87,9 +89,40 @@ def _compute_structural_metrics(
 
     # Coverage: fraction of concepts that appear in at least one edge
     coverage = len(concept_ids_in_edges) / total_concepts if total_concepts > 0 else 0.0
+    high_quality_concepts = [
+        c for c in concepts
+        if not is_low_quality_label(c.canonical)
+    ]
+    high_quality_ids = {str(c.id) for c in high_quality_concepts}
+    high_quality_connected = high_quality_ids & concept_ids_in_edges
+    coverage_high_quality = (
+        len(high_quality_connected) / len(high_quality_ids)
+        if high_quality_ids else 0.0
+    )
+    if candidate_concept_ids is None:
+        candidate_concept_ids = high_quality_ids
+    candidate_connected = concept_ids_in_edges & candidate_concept_ids
+    coverage_candidate_set = (
+        len(candidate_connected) / len(candidate_concept_ids)
+        if candidate_concept_ids else 0.0
+    )
+    by_lang: dict[str, dict[str, Any]] = {}
+    for lang in sorted({(c.lang or "unknown") for c in concepts}):
+        lang_concepts = [c for c in concepts if (c.lang or "unknown") == lang]
+        lang_ids = {str(c.id) for c in lang_concepts}
+        if not lang_ids:
+            continue
+        connected = concept_ids_in_edges & lang_ids
+        by_lang[lang] = {
+            "concepts": len(lang_ids),
+            "connected": len(connected),
+            "coverage": round(len(connected) / len(lang_ids), 4),
+        }
 
     return {
         "total_concepts": total_concepts,
+        "high_quality_concepts": len(high_quality_ids),
+        "candidate_concepts": len(candidate_concept_ids),
         "total_edges": total_edges,
         "root_count": len(roots),
         "leaf_count": len(leaves),
@@ -99,6 +132,9 @@ def _compute_structural_metrics(
         "avg_branching_factor": round(avg_branching, 2),
         "max_branching_factor": max_branching,
         "coverage": round(coverage, 4),
+        "coverage_high_quality": round(coverage_high_quality, 4),
+        "coverage_candidate_set": round(coverage_candidate_set, 4),
+        "by_language": by_lang,
     }
 
 
@@ -179,6 +215,21 @@ def handle_evaluate(session: Session, msg: dict) -> None:
         .filter(TaxonomyEdge.taxonomy_version_id == taxonomy_version_id)
         .all()
     )
+    concept_ids = [c.id for c in concepts]
+    doc_rows = (
+        session.query(ConceptOccurrence.concept_id, DocumentChunk.document_id)
+        .join(DocumentChunk, ConceptOccurrence.chunk_id == DocumentChunk.id)
+        .filter(ConceptOccurrence.concept_id.in_(concept_ids))
+        .all()
+    )
+    concept_doc_sets: dict[str, set[str]] = defaultdict(set)
+    for concept_id, document_id in doc_rows:
+        concept_doc_sets[str(concept_id)].add(str(document_id))
+    candidate_concept_ids = {
+        str(c.id)
+        for c in concepts
+        if not is_low_quality_label(c.canonical) and len(concept_doc_sets.get(str(c.id), set())) >= 2
+    }
 
     if is_job_cancelled(session, job_id):
         return
@@ -186,12 +237,18 @@ def handle_evaluate(session: Session, msg: dict) -> None:
     update_job_status(session, job_id, "RUNNING", progress=20)
 
     # ── Structural metrics ───────────────────────────────
-    structural = _compute_structural_metrics(concepts, edges)
+    structural = _compute_structural_metrics(
+        concepts,
+        edges,
+        candidate_concept_ids=candidate_concept_ids,
+    )
     add_job_event(
         session, job_id, "INFO",
         f"Structural metrics: {structural.get('total_edges', 0)} edges, "
         f"depth={structural.get('max_depth', 0)}, "
-        f"coverage={structural.get('coverage', 0):.1%}",
+        f"coverage={structural.get('coverage', 0):.1%}, "
+        f"coverage_hq={structural.get('coverage_high_quality', 0):.1%}, "
+        f"coverage_candidate={structural.get('coverage_candidate_set', 0):.1%}",
     )
     update_job_status(session, job_id, "RUNNING", progress=50)
 
@@ -223,6 +280,8 @@ def handle_evaluate(session: Session, msg: dict) -> None:
     add_job_event(
         session, job_id, "INFO",
         f"Evaluation complete: coverage={structural.get('coverage', 0):.1%}, "
+        f"coverage_hq={structural.get('coverage_high_quality', 0):.1%}, "
+        f"coverage_candidate={structural.get('coverage_candidate_set', 0):.1%}, "
         f"edges={structural.get('total_edges', 0)}, "
         f"avg_confidence={edge_stats.get('avg_score', 0):.3f}",
     )

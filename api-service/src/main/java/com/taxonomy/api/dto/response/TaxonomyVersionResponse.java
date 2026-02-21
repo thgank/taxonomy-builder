@@ -9,6 +9,7 @@ public record TaxonomyVersionResponse(
         UUID collectionId,
         String algorithm,
         Map<String, Object> parameters,
+        Map<String, Object> qualityMetrics,
         String status,
         Instant createdAt,
         Instant finishedAt,

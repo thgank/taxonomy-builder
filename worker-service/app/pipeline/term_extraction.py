@@ -34,7 +34,11 @@ _nlp_models: dict[str, Any] = {}
 def _load_spacy(lang: str) -> Any:
     if lang not in _nlp_models:
         import spacy
-        name = {"en": config.spacy_model_en, "ru": config.spacy_model_ru}.get(lang)
+        name = {
+            "en": config.spacy_model_en,
+            "ru": config.spacy_model_ru,
+            "kk": config.spacy_model_kk,
+        }.get(lang)
         if name:
             try:
                 _nlp_models[lang] = spacy.load(name)
@@ -54,8 +58,123 @@ STOP_EN = set("the a an is are was were be been being have has had do does did w
 
 STOP_RU = set("и в не на с что как по это он она они мы вы я а но за то все его её их этот эта "
               "эти из к у так уже от при бы до который когда только или тоже ещё более".split())
+STOP_KK = set(
+    "және мен бұл сол үшін бойынша сияқты өте бар жоқ емес болып туралы қажет негізгі "
+    "арқылы бірге дейін кейін немесе әрі тағы бірақ да де дерек мәлімет жүйе деңгей"
+    .split()
+)
 
-STOPWORDS = STOP_EN | STOP_RU
+STOPWORDS = STOP_EN | STOP_RU | STOP_KK
+GENERIC_TERMS = {
+    "such", "type", "kind", "form", "sort", "other", "common", "include",
+    "includes", "used", "provide", "provides", "process", "term", "service",
+    "services", "product", "products",
+    "түр", "нысан", "санат", "жалпы", "негізгі", "мысал", "қызмет",
+    "услуга", "пример", "форма", "категория", "процесс",
+}
+SPLIT_CONNECTORS = {"and", "or", "и", "или", "және", "немесе"}
+TOKEN_RE = re.compile(r"[^\W_]+", re.UNICODE)
+UNIT_OR_TECH_TOKENS = {
+    "kw", "mw", "gw", "kwh", "mwh", "gwh", "twh",
+    "wh", "ah", "mah", "cm", "cm2", "cm3", "mm", "kv", "hz",
+    "kg", "mg", "lb", "doi", "isbn", "issn", "pmid",
+    "bmatrix", "latex", "fig", "table", "et", "al",
+}
+BAD_SINGLE_TOKENS = {
+    "use", "used", "using", "include", "includes", "including", "provide",
+    "provides", "allow", "allows", "make", "makes", "show", "shows",
+    "occur", "occurs", "work", "works", "begin", "end",
+    "also", "which", "usually", "many", "significant", "typically", "over",
+    "major", "mostly", "often", "much", "several", "various",
+    "high", "low", "new", "old", "good", "bad", "large", "small", "different",
+    "same", "general", "specific", "important", "common", "main", "basic",
+    "certain", "other", "another", "more", "less", "most", "least", "than",
+    "түр", "нысан", "санат", "жалпы", "негізгі", "мысал", "қызмет",
+    "бұл", "сол", "яғни", "демек", "также", "пример", "процесс", "категория",
+}
+BAD_TERM_PHRASES = {
+    "том числе",
+    "в том числе",
+    "составляет около",
+    "около",
+    "включая",
+    "соның ішінде",
+    "кез келген",
+    "атап айтқанда",
+    "үшін",
+    "арқылы",
+}
+NOISE_TERM_PATTERNS = [
+    re.compile(r"^(?:doi|isbn|issn|pmid)\b", re.IGNORECASE),
+    re.compile(r"^[a-z]{1,2}\d+[a-z0-9]*$", re.IGNORECASE),
+    re.compile(r"^\d+[a-z]{1,3}$", re.IGNORECASE),
+    re.compile(r".*\b(?:bmatrix|latex|arxiv)\b.*", re.IGNORECASE),
+]
+
+
+def _compile_term_pattern(term: str) -> re.Pattern:
+    # Token boundary guard to avoid partial substring hits.
+    return re.compile(rf"(?<!\w){re.escape(term)}(?!\w)", re.IGNORECASE | re.UNICODE)
+
+
+def _is_noise_token(token: str) -> bool:
+    t = token.lower().strip()
+    if not t:
+        return True
+    if len(t) <= 1:
+        return True
+    if t in STOPWORDS or t in GENERIC_TERMS:
+        return True
+    if t in UNIT_OR_TECH_TOKENS:
+        return True
+    if any(ch.isdigit() for ch in t):
+        # keep only if token has meaningful alpha payload (e.g. 3phase -> reject)
+        alpha = "".join(ch for ch in t if ch.isalpha())
+        if len(alpha) < 3:
+            return True
+    if re.match(r"^\d+$", t):
+        return True
+    return False
+
+
+def _is_noise_term(term: str, nlp_model: Any = None) -> bool:
+    t = term.lower().strip()
+    if not t or len(t) < 2:
+        return True
+    if t in BAD_TERM_PHRASES:
+        return True
+    if any(phrase in t for phrase in BAD_TERM_PHRASES if " " in phrase):
+        return True
+    for pat in NOISE_TERM_PATTERNS:
+        if pat.match(t):
+            return True
+    tokens = [x.lower() for x in TOKEN_RE.findall(t)]
+    if not tokens:
+        return True
+    if len(tokens) > 6:
+        return True
+    noise_count = sum(1 for tok in tokens if _is_noise_token(tok))
+    if len(tokens) == 1 and noise_count == 1:
+        return True
+    if noise_count == len(tokens):
+        return True
+    if len(tokens) <= 2 and noise_count >= len(tokens):
+        return True
+    meaningful_count = len(tokens) - noise_count
+    if len(tokens) >= 2 and meaningful_count < 2:
+        return True
+    if len(tokens) == 1 and tokens[0] in BAD_SINGLE_TOKENS:
+        return True
+    if len(tokens) >= 2 and tokens[0] == tokens[-1]:
+        return True
+    if nlp_model and len(tokens) == 1:
+        try:
+            doc = nlp_model(tokens[0])
+            if doc and doc[0].pos_ in {"VERB", "AUX", "ADV", "ADP", "PRON", "DET"}:
+                return True
+        except Exception:
+            pass
+    return False
 
 
 # ── Normalization ────────────────────────────────────────
@@ -70,7 +189,9 @@ def normalize_term(term: str, nlp_model: Any = None) -> str | None:
     if re.match(r"^\d+$", term):
         return None
     # stopword single-token filter
-    tokens = term.split()
+    tokens = [t.lower() for t in TOKEN_RE.findall(term)]
+    if not tokens:
+        return None
     if len(tokens) == 1 and tokens[0] in STOPWORDS:
         return None
     # lemmatize with spaCy if available
@@ -79,21 +200,63 @@ def normalize_term(term: str, nlp_model: Any = None) -> str | None:
         lemmas = [t.lemma_ for t in doc if not t.is_punct and not t.is_space]
         if lemmas:
             term = " ".join(lemmas).strip().lower()
+    term = re.sub(r"\s+", " ", term).strip()
     if not term or len(term) < 2:
+        return None
+    if term in BAD_TERM_PHRASES:
+        return None
+    tokens = [t.lower() for t in TOKEN_RE.findall(term)]
+    if len(tokens) == 1 and tokens[0] in GENERIC_TERMS:
+        return None
+    if len(tokens) > 1:
+        tokens = [t for t in tokens if t not in GENERIC_TERMS and t not in SPLIT_CONNECTORS]
+        if not tokens:
+            return None
+        term = " ".join(tokens).strip()
+    if len(tokens) > 4:
+        return None
+    if len(tokens) == 1 and tokens[0] in STOPWORDS:
+        return None
+    if not term or len(term) < 2:
+        return None
+    if _is_noise_term(term, nlp_model):
         return None
     return term
 
 
 # ── Method 1: TF-IDF on n-grams ─────────────────────────
 
+def _split_phrase(phrase: str) -> list[str]:
+    parts = re.split(
+        r"\s*(?:,|;|/|\band\b|\bor\b|\bи\b|\bили\b|\bжәне\b|\bнемесе\b)\s*",
+        phrase.strip(),
+        flags=re.IGNORECASE,
+    )
+    return [p.strip() for p in parts if len(p.strip()) >= 2]
+
+
+def _is_allowed_np(span: Any) -> bool:
+    tokens = [t for t in span if not t.is_space and not t.is_punct]
+    if not tokens or len(tokens) > 4:
+        return False
+    allowed = {"ADJ", "NOUN", "PROPN", "NUM"}
+    if any(t.pos_ not in allowed for t in tokens):
+        return False
+    if tokens[-1].pos_ not in {"NOUN", "PROPN"}:
+        return False
+    return any(t.pos_ in {"NOUN", "PROPN"} for t in tokens)
+
+
 def extract_noun_phrases_spacy(text: str, nlp_model: Any) -> list[str]:
     """Extract noun phrases using spaCy."""
     doc = nlp_model(text[:100_000])  # limit to avoid OOM
     phrases = []
     for np in doc.noun_chunks:
+        if not _is_allowed_np(np):
+            continue
         clean = np.text.strip()
-        if 2 <= len(clean.split()) <= 4:
-            phrases.append(clean)
+        for part in _split_phrase(clean):
+            phrases.append(part)
     # also single nouns
     for token in doc:
         if token.pos_ in ("NOUN", "PROPN") and len(token.text) > 2:
@@ -101,10 +264,10 @@ def extract_noun_phrases_spacy(text: str, nlp_model: Any) -> list[str]:
     return phrases
 
 
-def extract_ngrams(text: str, ns: tuple[int, ...] = (1, 2, 3)) -> list[str]:
+def extract_ngrams(text: str, ns: tuple[int, ...] = (1, 2)) -> list[str]:
     """Fallback: extract n-grams from tokens."""
-    tokens = re.findall(r"\b\w{2,}\b", text.lower())
-    tokens = [t for t in tokens if t not in STOPWORDS and not t.isdigit()]
+    tokens = [t.lower() for t in TOKEN_RE.findall(text) if len(t) >= 2]
+    tokens = [t for t in tokens if not _is_noise_token(t)]
     grams = []
     for n in ns:
         for i in range(len(tokens) - n + 1):
@@ -117,6 +280,7 @@ def tfidf_extract(
     nlp_model: Any,
     max_terms: int,
     min_freq: int,
+    min_doc_freq: int,
 ) -> dict[str, float]:
     """
     TF-IDF scoring of candidate terms across chunks.
@@ -140,7 +304,7 @@ def tfidf_extract(
                 continue
             term_count[norm] += 1
             if norm not in seen_in_chunk:
-                term_doc_map[norm].add(str(chunk.id))
+                term_doc_map[norm].add(str(chunk.document_id))
                 seen_in_chunk.add(norm)
 
     # Filter by min frequency
@@ -151,6 +315,8 @@ def tfidf_extract(
     scores: dict[str, float] = {}
     for term, count in term_count.items():
         if count < min_freq:
+            continue
+        if len(term_doc_map[term]) < min_doc_freq:
             continue
         tf = math.log1p(count)
         idf = math.log1p(num_docs / len(term_doc_map[term]))
@@ -181,8 +347,8 @@ def textrank_extract(
     all_tokens: list[list[str]] = []
     for chunk in chunks:
         text = chunk.text.lower()
-        tokens = re.findall(r"\b\w{2,}\b", text)
-        tokens = [t for t in tokens if t not in STOPWORDS and not t.isdigit()]
+        tokens = [t for t in TOKEN_RE.findall(text) if len(t) >= 2]
+        tokens = [t for t in tokens if not _is_noise_token(t)]
         if nlp_model:
             doc = nlp_model(chunk.text[:50_000])
             tokens = [
@@ -190,6 +356,7 @@ def textrank_extract(
                 for t in doc
                 if t.pos_ in ("NOUN", "PROPN", "ADJ") and len(t.text) > 2
             ]
+            tokens = [t for t in tokens if not _is_noise_token(t)]
         all_tokens.append(tokens)
 
     # Build vocabulary
@@ -265,6 +432,173 @@ def merge_scores(
     return dict(sorted(merged.items(), key=lambda x: x[1], reverse=True))
 
 
+def _normalize_score_map(scores: dict[str, float]) -> dict[str, float]:
+    if not scores:
+        return {}
+    vals = list(scores.values())
+    lo, hi = min(vals), max(vals)
+    if hi <= lo:
+        return {k: 1.0 for k in scores}
+    return {k: (v - lo) / (hi - lo) for k, v in scores.items()}
+
+
+def _compute_token_freq(chunks: list[DocumentChunk]) -> Counter:
+    cnt = Counter()
+    for chunk in chunks:
+        toks = [t.lower() for t in TOKEN_RE.findall(chunk.text)]
+        toks = [t for t in toks if t not in STOPWORDS and len(t) > 1]
+        cnt.update(toks)
+    return cnt
+
+
+def _compute_term_freq(terms: list[str], chunks: list[DocumentChunk]) -> Counter:
+    freq = Counter()
+    patterns = {t: _compile_term_pattern(t) for t in terms}
+    for chunk in chunks:
+        text = chunk.text
+        for t, pat in patterns.items():
+            hits = len(pat.findall(text))
+            if hits > 0:
+                freq[t] += hits
+    return freq
+
+
+def _compute_term_doc_freq(terms: list[str], chunks: list[DocumentChunk]) -> dict[str, int]:
+    doc_sets: dict[str, set[str]] = {t: set() for t in terms}
+    patterns = {t: _compile_term_pattern(t) for t in terms}
+    for chunk in chunks:
+        text = chunk.text
+        doc_id = str(chunk.document_id)
+        for t, pat in patterns.items():
+            if pat.search(text):
+                doc_sets[t].add(doc_id)
+    return {t: len(ids) for t, ids in doc_sets.items()}
+
+
+def _suppress_subsumed_single_tokens(
+    scores: dict[str, float],
+    term_doc_freq: dict[str, int],
+) -> dict[str, float]:
+    """Drop generic single-token terms if a stronger multi-token parent phrase exists."""
+    if not scores:
+        return {}
+    multi_terms = [t for t in scores.keys() if len(t.split()) >= 2]
+    if not multi_terms:
+        return scores
+    out = dict(scores)
+    for term in list(out.keys()):
+        toks = [t.lower() for t in TOKEN_RE.findall(term)]
+        if len(toks) != 1:
+            continue
+        tok = toks[0]
+        df = int(term_doc_freq.get(term, 0))
+        if len(tok) < 4 or tok in GENERIC_TERMS or tok in BAD_SINGLE_TOKENS:
+            out.pop(term, None)
+            continue
+        # Keep strongly-supported single terms, suppress weak ones.
+        if df >= 4:
+            continue
+        for mt in multi_terms:
+            mt_toks = [t.lower() for t in TOKEN_RE.findall(mt)]
+            if tok not in mt_toks:
+                continue
+            if int(term_doc_freq.get(mt, 0)) >= max(2, df):
+                out.pop(term, None)
+                break
+    return out
+
+
+def _candidate_quality_score(
+    term: str,
+    base_norm_score: float,
+    doc_freq: int,
+    total_docs: int,
+) -> float:
+    tokens = [t.lower() for t in TOKEN_RE.findall(term)]
+    if not tokens:
+        return 0.0
+    df_ratio = doc_freq / max(1, total_docs)
+    df_component = min(1.0, df_ratio / 0.6)  # reward terms seen in >=60% docs
+    phrase_bonus = 1.0 if len(tokens) >= 2 else 0.35
+    shape_penalty = 1.0
+    if any(ch.isdigit() for ch in term):
+        shape_penalty -= 0.25
+    if len(tokens) == 1 and len(tokens[0]) <= 3:
+        shape_penalty -= 0.25
+    if len(tokens) > 4:
+        shape_penalty -= 0.30
+    score = (0.55 * base_norm_score) + (0.30 * df_component) + (0.15 * phrase_bonus)
+    return max(0.0, min(1.0, score * shape_penalty))
+
+
+def _compute_cvalue_scores(terms: list[str], term_freq: Counter) -> dict[str, float]:
+    containing_map: dict[str, list[str]] = defaultdict(list)
+    for t in terms:
+        t_space = f" {t} "
+        for longer in terms:
+            if longer == t or len(longer) <= len(t):
+                continue
+            if t_space in f" {longer} ":
+                containing_map[t].append(longer)
+
+    cvals: dict[str, float] = {}
+    for t in terms:
+        words = t.split()
+        length_weight = math.log2(1 + len(words))
+        ft = float(term_freq.get(t, 0))
+        containing = containing_map.get(t, [])
+        if containing:
+            avg_longer = sum(term_freq.get(x, 0) for x in containing) / max(1, len(containing))
+            base = max(0.0, ft - avg_longer)
+        else:
+            base = ft
+        cvals[t] = round(length_weight * base, 6)
+    return cvals
+
+
+def _compute_pmi_scores(terms: list[str], token_freq: Counter) -> dict[str, float]:
+    total = float(sum(token_freq.values()) or 1.0)
+    pmis: dict[str, float] = {}
+    for t in terms:
+        toks = t.split()
+        if len(toks) < 2:
+            pmis[t] = 0.0
+            continue
+        # proxy term probability: min token probability
+        p_term = min((token_freq.get(tok, 0) / total) for tok in toks)
+        p_prod = 1.0
+        for tok in toks:
+            p_prod *= max(token_freq.get(tok, 0) / total, 1e-12)
+        pmi = math.log((p_term + 1e-12) / (p_prod + 1e-12))
+        pmis[t] = round(max(0.0, pmi), 6)
+    return pmis
+
+
+def refine_term_scores(base_scores: dict[str, float], chunks: list[DocumentChunk]) -> dict[str, float]:
+    """Re-rank terms using C-value/PMI to improve concept quality."""
+    if not base_scores:
+        return {}
+    terms = list(base_scores.keys())
+    term_freq = _compute_term_freq(terms, chunks)
+    token_freq = _compute_token_freq(chunks)
+    cvals = _compute_cvalue_scores(terms, term_freq)
+    pmis = _compute_pmi_scores(terms, token_freq)
+
+    n_base = _normalize_score_map(base_scores)
+    n_cval = _normalize_score_map(cvals)
+    n_pmi = _normalize_score_map(pmis)
+
+    refined: dict[str, float] = {}
+    for t in terms:
+        words = t.split()
+        if len(words) >= 2:
+            score = (0.55 * n_base.get(t, 0.0)) + (0.30 * n_cval.get(t, 0.0)) + (0.15 * n_pmi.get(t, 0.0))
+        else:
+            score = (0.80 * n_base.get(t, 0.0)) + (0.20 * n_cval.get(t, 0.0))
+        refined[t] = round(score, 6)
+    return dict(sorted(refined.items(), key=lambda x: x[1], reverse=True))
+
+
 # ── Deduplication with fuzzy matching ────────────────────
 
 def deduplicate_terms(
@@ -277,7 +611,6 @@ def deduplicate_terms(
 
     from rapidfuzz import fuzz
 
-    canonical_map: dict[str, str] = {}  # surface → canonical
     canonical_scores: dict[str, float] = {}
     surface_lists: dict[str, list[str]] = {}
 
@@ -307,21 +640,47 @@ def find_occurrences(
     chunks: list[DocumentChunk],
     max_per_term: int = 20,
 ) -> list[dict]:
-    """Find snippets where term appears in chunks."""
+    """Find sentence-bounded snippets where term appears in chunks."""
+    def sentence_bounds(text: str, pos: int) -> tuple[int, int]:
+        left = text.rfind(".", 0, pos)
+        q_left = text.rfind("?", 0, pos)
+        e_left = text.rfind("!", 0, pos)
+        start = max(left, q_left, e_left)
+        start = 0 if start < 0 else start + 1
+
+        right_candidates = [x for x in (text.find(".", pos), text.find("?", pos), text.find("!", pos)) if x != -1]
+        end = min(right_candidates) + 1 if right_candidates else len(text)
+        return start, end
+
+    def occurrence_confidence(term_text: str, snippet: str) -> float:
+        toks = [t.lower() for t in TOKEN_RE.findall(term_text)]
+        tok_count = max(1, len(toks))
+        df = len(set(toks))
+        alpha_ratio = sum(1 for ch in term_text if ch.isalpha()) / max(1, len(term_text))
+        base = 0.55 + min(0.18, 0.06 * tok_count) + min(0.08, 0.03 * df)
+        if len(snippet) < 25:
+            base -= 0.07
+        if alpha_ratio < 0.65:
+            base -= 0.08
+        return round(max(0.35, min(0.96, base)), 3)
+
     occurrences = []
-    pattern = re.compile(re.escape(term), re.IGNORECASE)
+    pattern = _compile_term_pattern(term)
 
     for chunk in chunks:
         for match in pattern.finditer(chunk.text):
-            start = max(0, match.start() - 50)
-            end = min(len(chunk.text), match.end() + 50)
-            snippet = chunk.text[start:end]
+            s_start, s_end = sentence_bounds(chunk.text, match.start())
+            start = max(0, min(match.start(), s_start))
+            end = min(len(chunk.text), max(match.end(), s_end))
+            snippet = re.sub(r"\s+", " ", chunk.text[start:end]).strip()
+            if not snippet:
+                continue
             occurrences.append({
                 "chunk_id": str(chunk.id),
                 "snippet": snippet,
                 "start_offset": match.start(),
                 "end_offset": match.end(),
-                "confidence": 0.8,
+                "confidence": occurrence_confidence(term, snippet),
             })
             if len(occurrences) >= max_per_term:
                 return occurrences
@@ -341,6 +700,10 @@ def handle_terms(session: Session, msg: dict) -> None:
 
     max_terms = int(params.get("max_terms", config.max_terms))
     min_freq = int(params.get("min_freq", config.min_term_freq))
+    min_doc_freq = int(params.get("min_doc_freq", config.min_doc_freq))
+    min_quality_score = float(
+        params.get("min_term_quality_score", config.min_term_quality_score)
+    )
     method = params.get("method_term_extraction", "both")
 
     # Get all chunks for collection
@@ -362,27 +725,52 @@ def handle_terms(session: Session, msg: dict) -> None:
         update_job_status(session, job_id, "RUNNING", progress=100)
         return
 
-    # Detect dominant language
-    langs = Counter(c.lang for c in chunks if c.lang)
-    dominant_lang = langs.most_common(1)[0][0] if langs else "en"
-    nlp_model = _load_spacy(dominant_lang)
-
-    add_job_event(session, job_id, "INFO", f"Dominant language: {dominant_lang}")
+    # Extract per language to avoid collapsing mixed collections into one language.
+    chunks_by_lang: dict[str, list[DocumentChunk]] = defaultdict(list)
+    for c in chunks:
+        lang = (c.lang or config.default_language or "en").lower()[:2]
+        chunks_by_lang[lang].append(c)
+    dominant_lang = Counter({k: len(v) for k, v in chunks_by_lang.items()}).most_common(1)[0][0]
+    add_job_event(
+        session,
+        job_id,
+        "INFO",
+        f"Chunk language split: { {k: len(v) for k, v in chunks_by_lang.items()} }",
+    )
     update_job_status(session, job_id, "RUNNING", progress=10)
 
-    # Extract terms
+    # Extract terms per language bucket, then merge.
     tfidf_scores: dict[str, float] = {}
     textrank_scores: dict[str, float] = {}
+    term_lang_scores: dict[str, tuple[str, float]] = {}
+
+    for lang, lang_chunks in chunks_by_lang.items():
+        nlp_model = _load_spacy(lang)
+        if method in ("tfidf", "both"):
+            lang_scores = tfidf_extract(
+                lang_chunks, nlp_model, max_terms * 2, min_freq, min_doc_freq
+            )
+            for term, score in lang_scores.items():
+                if score > tfidf_scores.get(term, 0.0):
+                    tfidf_scores[term] = score
+                prev = term_lang_scores.get(term)
+                if prev is None or score > prev[1]:
+                    term_lang_scores[term] = (lang, float(score))
+        if method in ("textrank", "both"):
+            lang_scores = textrank_extract(lang_chunks, nlp_model, max_terms * 2)
+            for term, score in lang_scores.items():
+                if score > textrank_scores.get(term, 0.0):
+                    textrank_scores[term] = score
+                prev = term_lang_scores.get(term)
+                if prev is None or score > prev[1]:
+                    term_lang_scores[term] = (lang, float(score))
 
     if method in ("tfidf", "both"):
-        tfidf_scores = tfidf_extract(chunks, nlp_model, max_terms * 2, min_freq)
         add_job_event(session, job_id, "INFO",
                       f"TF-IDF extracted {len(tfidf_scores)} candidates")
-
     update_job_status(session, job_id, "RUNNING", progress=30)
 
     if method in ("textrank", "both"):
-        textrank_scores = textrank_extract(chunks, nlp_model, max_terms * 2)
         add_job_event(session, job_id, "INFO",
                       f"TextRank extracted {len(textrank_scores)} candidates")
 
@@ -398,12 +786,60 @@ def handle_terms(session: Session, msg: dict) -> None:
 
     # Deduplicate
     deduped_scores, surface_map = deduplicate_terms(final_scores)
+    deduped_scores = refine_term_scores(deduped_scores, chunks)
+    deduped_scores = {
+        term: score
+        for term, score in deduped_scores.items()
+        if not _is_noise_term(
+            term,
+            _load_spacy(term_lang_scores.get(term, (dominant_lang, 0.0))[0]),
+        )
+    }
+    total_docs = max(1, len({str(c.document_id) for c in chunks}))
+    term_doc_freq = _compute_term_doc_freq(list(deduped_scores.keys()), chunks)
+    norm_refined = _normalize_score_map(deduped_scores)
+    quality_filtered: dict[str, float] = {}
+    deduped_scores = _suppress_subsumed_single_tokens(deduped_scores, term_doc_freq)
+    single_token_extra = 0.17
+    for term, score in deduped_scores.items():
+        df = int(term_doc_freq.get(term, 0))
+        if df < min_doc_freq:
+            continue
+        toks = [t.lower() for t in TOKEN_RE.findall(term)]
+        if not toks:
+            continue
+        if len(toks) == 1:
+            if len(toks[0]) < 4:
+                continue
+            if toks[0] in BAD_SINGLE_TOKENS or _is_noise_token(toks[0]):
+                continue
+        q_score = _candidate_quality_score(
+            term,
+            base_norm_score=float(norm_refined.get(term, 0.0)),
+            doc_freq=df,
+            total_docs=total_docs,
+        )
+        dynamic_threshold = min_quality_score + (single_token_extra if len(toks) == 1 else 0.0)
+        if q_score < dynamic_threshold:
+            continue
+        quality_filtered[term] = score
+    deduped_scores = quality_filtered
+    surface_map = {
+        term: forms
+        for term, forms in surface_map.items()
+        if term in deduped_scores
+    }
+    term_lang_map = {
+        term: term_lang_scores.get(term, (dominant_lang, 0.0))[0]
+        for term in deduped_scores
+    }
 
     # Limit
     top_terms = dict(list(deduped_scores.items())[:max_terms])
 
     add_job_event(session, job_id, "INFO",
-                  f"After dedup: {len(top_terms)} terms")
+                  f"After dedup: {len(top_terms)} terms "
+                  f"(min_doc_freq={min_doc_freq}, min_quality_score={min_quality_score:.2f})")
     update_job_status(session, job_id, "RUNNING", progress=60)
 
     # Delete existing concepts for idempotency
@@ -430,14 +866,18 @@ def handle_terms(session: Session, msg: dict) -> None:
             collection_id=collection_id,
             canonical=term,
             surface_forms=surface_map.get(term, [term]),
-            lang=dominant_lang,
+            lang=term_lang_map.get(term, dominant_lang),
             score=score,
         )
         session.add(concept)
         session.flush()
 
         # Find occurrences
-        occs = find_occurrences(term, chunks)
+        term_lang = concept.lang or dominant_lang
+        lang_chunks = chunks_by_lang.get(term_lang[:2], chunks)
+        occs = find_occurrences(term, lang_chunks)
+        if not occs:
+            occs = find_occurrences(term, chunks)
         for occ in occs:
             occurrence = ConceptOccurrence(
                 id=uuid.uuid4(),

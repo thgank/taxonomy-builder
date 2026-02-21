@@ -6,7 +6,7 @@ Stores detected language on each chunk row.
 """
 from __future__ import annotations
 
-import uuid
+import re
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -19,6 +19,18 @@ from app.job_helper import (
 from app.logger import get_logger
 
 log = get_logger(__name__)
+KAZAKH_SPECIFIC_CHARS = set("әғқңөұүһіӘҒҚҢӨҰҮҺІ")
+STOPWORDS_KK = {
+    "және", "мен", "бұл", "сол", "үшін", "бойынша", "сияқты", "өте",
+    "бар", "жоқ", "емес", "болып", "туралы", "қажет", "негізгі",
+    "құрал", "деңгей", "жүйе", "мәлімет", "дерек", "арқылы", "бірге",
+}
+STOPWORDS_RU = {
+    "и", "в", "на", "по", "для", "что", "как", "это", "не", "но",
+    "при", "из", "к", "от", "до", "уже", "если", "также", "данные",
+    "система", "уровень", "документ", "через",
+}
+TOKEN_RE = re.compile(r"[^\W_]+", re.UNICODE)
 
 # Lazy-loaded spaCy models
 _models: dict[str, Any] = {}
@@ -31,6 +43,7 @@ def _get_spacy_model(lang: str) -> Any:
         model_name = {
             "en": config.spacy_model_en,
             "ru": config.spacy_model_ru,
+            "kk": config.spacy_model_kk,
         }.get(lang)
         if model_name:
             try:
@@ -44,13 +57,62 @@ def _get_spacy_model(lang: str) -> Any:
     return _models.get(lang)
 
 
-def detect_language(text: str) -> str:
-    """Detect language of a text snippet."""
-    try:
-        from langdetect import detect
-        return detect(text[:2000])
-    except Exception:
+def _normalize_lang(code: str) -> str:
+    c = (code or "").lower().strip()
+    if c.startswith("en"):
         return "en"
+    if c.startswith("ru"):
+        return "ru"
+    if c.startswith("kk"):
+        return "kk"
+    return config.default_language
+
+
+def _heuristic_cyrillic_lang(sample: str) -> str:
+    if any(ch in KAZAKH_SPECIFIC_CHARS for ch in sample):
+        return "kk"
+    low = sample.lower()
+    tokens = TOKEN_RE.findall(low)
+    if not tokens:
+        return config.default_language
+    kk_hits = sum(1 for w in STOPWORDS_KK if w in low)
+    ru_hits = sum(1 for w in STOPWORDS_RU if w in low)
+    kk_hits += sum(1 for t in tokens if t in STOPWORDS_KK)
+    ru_hits += sum(1 for t in tokens if t in STOPWORDS_RU)
+    if kk_hits > ru_hits:
+        return "kk"
+    if ru_hits > kk_hits:
+        return "ru"
+    return config.default_language
+
+
+def detect_language(text: str) -> str:
+    """Detect language of a text snippet with normalization and confidence-aware fallback."""
+    sample = (text or "")[:3000]
+    if not sample.strip():
+        return config.default_language
+
+    # Fast-path for Cyrillic disambiguation.
+    cyrillic_hint = _heuristic_cyrillic_lang(sample)
+    if cyrillic_hint == "kk":
+        return "kk"
+
+    try:
+        from langdetect import detect_langs
+
+        probs = detect_langs(sample)
+        if probs:
+            top = probs[0]
+            lang = _normalize_lang(top.lang)
+            # For Cyrillic samples with borderline confidence, disambiguate ru vs kk.
+            if lang in {"ru", "kk"} and top.prob < 0.90:
+                lang = _heuristic_cyrillic_lang(sample)
+            if lang not in config.supported_languages:
+                return config.default_language
+            return lang
+    except Exception:
+        pass
+    return config.default_language
 
 
 def handle_nlp(session: Session, msg: dict) -> None:

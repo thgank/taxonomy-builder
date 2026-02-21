@@ -22,6 +22,23 @@ from app.job_helper import (
 from app.logger import get_logger
 
 log = get_logger(__name__)
+HEADER_PREFIXES = (
+    "source:",
+    "language:",
+    "title:",
+    "url:",
+    "retrieved:",
+    "author:",
+    "authors:",
+    "категория:",
+    "источник:",
+    "тілі:",
+    "дереккөз:",
+)
+WIKI_BANNER_PATTERNS = (
+    re.compile(r"^from wikipedia\b", re.IGNORECASE),
+    re.compile(r"^материал из википедии\b", re.IGNORECASE),
+)
 
 # ── Text extractors ──────────────────────────────────────
 
@@ -56,6 +73,26 @@ EXTRACTORS: dict[str, Any] = {
     "text/html": extract_text_html,
     "text/plain": extract_text_plain,
 }
+
+
+def _clean_extracted_text(text: str) -> str:
+    cleaned_lines: list[str] = []
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            cleaned_lines.append("")
+            continue
+        low = line.lower()
+        if config.strip_document_headers and low.startswith(HEADER_PREFIXES):
+            continue
+        if any(pat.match(line) for pat in WIKI_BANNER_PATTERNS):
+            continue
+        cleaned_lines.append(line)
+
+    cleaned = "\n".join(cleaned_lines)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
+    return cleaned.strip()
 
 
 # ── Chunking ─────────────────────────────────────────────
@@ -148,8 +185,22 @@ def handle_import(session: Session, msg: dict) -> None:
 
         try:
             filepath = os.path.join(config.storage_path, doc.storage_path)
-            extractor = EXTRACTORS.get(doc.mime_type, extract_text_plain)
+            extractor = EXTRACTORS.get(doc.mime_type)
+            if extractor is None:
+                if config.allow_plaintext_fallback:
+                    extractor = extract_text_plain
+                else:
+                    doc.status = "FAILED"
+                    add_job_event(
+                        session,
+                        job_id,
+                        "WARN",
+                        f"Unsupported MIME type for {doc.filename}: {doc.mime_type}",
+                    )
+                    session.commit()
+                    continue
             text = extractor(filepath)
+            text = _clean_extracted_text(text)
 
             if not text.strip():
                 doc.status = "FAILED"

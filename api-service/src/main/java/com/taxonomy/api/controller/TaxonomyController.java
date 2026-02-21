@@ -106,7 +106,8 @@ public class TaxonomyController {
     @Operation(summary = "Export taxonomy as JSON or CSV")
     public ResponseEntity<?> export(
             @PathVariable UUID taxId,
-            @RequestParam(value = "format", defaultValue = "json") String format) {
+            @RequestParam(value = "format", defaultValue = "json") String format,
+            @RequestParam(value = "include_orphans", defaultValue = "false") boolean includeOrphans) {
 
         if ("csv".equalsIgnoreCase(format)) {
             String csv = taxonomyService.exportCsv(taxId);
@@ -117,6 +118,6 @@ public class TaxonomyController {
                     .body(csv);
         }
 
-        return ResponseEntity.ok(taxonomyService.export(taxId));
+        return ResponseEntity.ok(taxonomyService.export(taxId, includeOrphans));
     }
 }
