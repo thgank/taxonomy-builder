@@ -36,7 +36,8 @@ public class TaxonomyVersion {
     private Map<String, Object> parameters = new HashMap<>();
 
     @Enumerated(EnumType.STRING)
-    @Column(nullable = false)
+    @JdbcTypeCode(SqlTypes.NAMED_ENUM)
+    @Column(nullable = false, columnDefinition = "taxonomy_status")
     private TaxonomyStatus status = TaxonomyStatus.NEW;
 
     @JdbcTypeCode(SqlTypes.JSON)

@@ -1,0 +1,48 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: taxonomy-postgres-dev
+    environment:
+      POSTGRES_DB: taxonomy
+      POSTGRES_USER: taxonomy
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-taxonomy_secret}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata-dev:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U taxonomy"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - taxonomy-dev-net
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    container_name: taxonomy-rabbitmq-dev
+    environment:
+      RABBITMQ_DEFAULT_USER: taxonomy
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-rabbit_secret}
+    volumes:
+      - ./infra/rabbitmq/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
+      - ./infra/rabbitmq/definitions.json:/etc/rabbitmq/definitions.json:ro
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - taxonomy-dev-net
+
+volumes:
+  pgdata-dev:
+
+networks:
+  taxonomy-dev-net:
+    driver: bridge

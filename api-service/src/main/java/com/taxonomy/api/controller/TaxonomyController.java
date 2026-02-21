@@ -102,7 +102,7 @@ public class TaxonomyController {
 
     /* ── Export ───────────────────────────────────────────── */
 
-    @GetMapping("/api/taxonomies/{taxId}:export")
+    @GetMapping({"/api/taxonomies/{taxId}/export", "/api/taxonomies/{taxId}:export"})
     @Operation(summary = "Export taxonomy as JSON or CSV")
     public ResponseEntity<?> export(
             @PathVariable UUID taxId,

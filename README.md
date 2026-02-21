@@ -61,6 +61,36 @@ docker compose ps
 docker compose logs -f
 ```
 
+### Локальная разработка без постоянного `--build`
+
+Если не хочешь постоянно пересобирать образы, запускай в Docker только инфраструктуру
+(`PostgreSQL + RabbitMQ`), а `api-service` и `worker-service` поднимай локально.
+
+```bash
+# 1. Поднять только инфраструктуру
+docker compose -f docker-compose.dev.yml up -d
+
+# 2. API локально (из api-service)
+./mvnw spring-boot:run
+
+# 3. Worker локально (из worker-service, в активном venv)
+python -m app.main
+```
+
+Остановить инфраструктуру:
+```bash
+docker compose -f docker-compose.dev.yml down
+```
+
+Примечание по RabbitMQ:
+топология (exchange/queues/bindings) теперь задается через
+`infra/rabbitmq/definitions.json` и поднимается автоматически при старте RabbitMQ.
+После изменения definitions перезапусти инфраструктуру:
+```bash
+docker compose -f docker-compose.dev.yml down
+docker compose -f docker-compose.dev.yml up -d
+```
+
 Сервисы будут доступны:
 
 | Сервис | URL |

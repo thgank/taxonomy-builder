@@ -1,0 +1,136 @@
+{
+  "vhosts": [
+    {
+      "name": "/"
+    }
+  ],
+  "queues": [
+    {
+      "name": "taxonomy.import",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {
+        "x-dead-letter-exchange": "taxonomy.dlx",
+        "x-message-ttl": 300000
+      }
+    },
+    {
+      "name": "taxonomy.nlp",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {
+        "x-dead-letter-exchange": "taxonomy.dlx",
+        "x-message-ttl": 300000
+      }
+    },
+    {
+      "name": "taxonomy.terms",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {
+        "x-dead-letter-exchange": "taxonomy.dlx",
+        "x-message-ttl": 300000
+      }
+    },
+    {
+      "name": "taxonomy.build",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {
+        "x-dead-letter-exchange": "taxonomy.dlx",
+        "x-message-ttl": 300000
+      }
+    },
+    {
+      "name": "taxonomy.evaluate",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {
+        "x-dead-letter-exchange": "taxonomy.dlx",
+        "x-message-ttl": 300000
+      }
+    },
+    {
+      "name": "taxonomy.dlq",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    }
+  ],
+  "exchanges": [
+    {
+      "name": "taxonomy",
+      "vhost": "/",
+      "type": "direct",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    },
+    {
+      "name": "taxonomy.dlx",
+      "vhost": "/",
+      "type": "fanout",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    }
+  ],
+  "bindings": [
+    {
+      "source": "taxonomy",
+      "vhost": "/",
+      "destination": "taxonomy.import",
+      "destination_type": "queue",
+      "routing_key": "import",
+      "arguments": {}
+    },
+    {
+      "source": "taxonomy",
+      "vhost": "/",
+      "destination": "taxonomy.nlp",
+      "destination_type": "queue",
+      "routing_key": "nlp",
+      "arguments": {}
+    },
+    {
+      "source": "taxonomy",
+      "vhost": "/",
+      "destination": "taxonomy.terms",
+      "destination_type": "queue",
+      "routing_key": "terms",
+      "arguments": {}
+    },
+    {
+      "source": "taxonomy",
+      "vhost": "/",
+      "destination": "taxonomy.build",
+      "destination_type": "queue",
+      "routing_key": "build",
+      "arguments": {}
+    },
+    {
+      "source": "taxonomy",
+      "vhost": "/",
+      "destination": "taxonomy.evaluate",
+      "destination_type": "queue",
+      "routing_key": "evaluate",
+      "arguments": {}
+    },
+    {
+      "source": "taxonomy.dlx",
+      "vhost": "/",
+      "destination": "taxonomy.dlq",
+      "destination_type": "queue",
+      "routing_key": "",
+      "arguments": {}
+    }
+  ]
+}
