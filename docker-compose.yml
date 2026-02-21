@@ -1,0 +1,95 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: taxonomy-postgres
+    environment:
+      POSTGRES_DB: taxonomy
+      POSTGRES_USER: taxonomy
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-taxonomy_secret}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U taxonomy"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - taxonomy-net
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    container_name: taxonomy-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: taxonomy
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-rabbit_secret}
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - taxonomy-net
+
+  api-service:
+    build:
+      context: ./api-service
+      dockerfile: Dockerfile
+    container_name: taxonomy-api
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/taxonomy
+      SPRING_DATASOURCE_USERNAME: taxonomy
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-taxonomy_secret}
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_PORT: 5672
+      SPRING_RABBITMQ_USERNAME: taxonomy
+      SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-rabbit_secret}
+      API_KEY: ${API_KEY:-dev-api-key-change-me}
+      STORAGE_PATH: /data/uploads
+    ports:
+      - "8080:8080"
+    volumes:
+      - uploads:/data/uploads
+    networks:
+      - taxonomy-net
+
+  worker-service:
+    build:
+      context: ./worker-service
+      dockerfile: Dockerfile
+    container_name: taxonomy-worker
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg2://taxonomy:${POSTGRES_PASSWORD:-taxonomy_secret}@postgres:5432/taxonomy
+      RABBITMQ_URL: amqp://taxonomy:${RABBITMQ_PASSWORD:-rabbit_secret}@rabbitmq:5672/
+      STORAGE_PATH: /data/uploads
+      LOG_LEVEL: INFO
+      SPACY_MODEL_EN: en_core_web_sm
+      SPACY_MODEL_RU: ru_core_news_sm
+    volumes:
+      - uploads:/data/uploads
+    networks:
+      - taxonomy-net
+
+volumes:
+  pgdata:
+  uploads:
+
+networks:
+  taxonomy-net:
+    driver: bridge
