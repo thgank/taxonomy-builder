@@ -151,10 +151,21 @@ def bridge_components(
     comps = _connected_components(edges, nodes=concept_labels or [])
     if len(comps) <= 1:
         return []
+    comp_idx: dict[str, int] = {}
+    largest_comp_id = 0
+    largest_comp_size = 0
+    for i, comp in enumerate(comps):
+        if len(comp) > largest_comp_size:
+            largest_comp_size = len(comp)
+            largest_comp_id = i
+        for node in comp:
+            comp_idx[node] = i
 
     out_degree: dict[str, int] = defaultdict(int)
+    existing_pairs: set[tuple[str, str]] = set()
     for e in edges:
         out_degree[e["hypernym"]] += 1
+        existing_pairs.add((e["hypernym"], e["hyponym"]))
 
     reps: list[str] = []
     for comp in comps:
@@ -186,6 +197,7 @@ def bridge_components(
 
     links: list[dict] = []
     used_pairs: set[tuple[str, str]] = set()
+    candidate_links: list[dict] = []
     lexical_floor = (
         float(min_lexical_similarity)
         if min_lexical_similarity is not None
@@ -226,8 +238,10 @@ def bridge_components(
             k = (parent, child)
             if k in used_pairs:
                 continue
+            if k in existing_pairs or (child, parent) in existing_pairs:
+                continue
             used_pairs.add(k)
-            links.append({
+            candidate_links.append({
                 "hypernym": parent,
                 "hyponym": child,
                 "score": round(min(0.92, sim), 4),
@@ -238,7 +252,25 @@ def bridge_components(
                     "lexical_similarity": round(lexical_sim, 4),
                     "semantic_similarity": round(semantic_sim, 4),
                 },
+                "_bridge_meta": {
+                    "cross_component": comp_idx.get(a) != comp_idx.get(b),
+                    "touches_largest": (
+                        comp_idx.get(a) == largest_comp_id or comp_idx.get(b) == largest_comp_id
+                    ),
+                    "similarity": sim,
+                },
             })
-            if len(links) >= max_links:
-                return links
+    candidate_links.sort(
+        key=lambda e: (
+            1 if e.get("_bridge_meta", {}).get("touches_largest") else 0,
+            1 if e.get("_bridge_meta", {}).get("cross_component") else 0,
+            float(e.get("_bridge_meta", {}).get("similarity", 0.0)),
+        ),
+        reverse=True,
+    )
+    for edge in candidate_links:
+        edge.pop("_bridge_meta", None)
+        links.append(edge)
+        if len(links) >= max_links:
+            break
     return links
