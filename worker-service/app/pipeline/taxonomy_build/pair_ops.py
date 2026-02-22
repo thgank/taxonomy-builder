@@ -33,6 +33,8 @@ def method_weight(method: str) -> float:
     m = (method or "").lower()
     if m == "hearst":
         return 0.72
+    if m == "hearst_trigger_fallback":
+        return 0.62
     if m == "embedding_clustering":
         return 0.64
     if m == "embedding_clustering_secondary_parent":

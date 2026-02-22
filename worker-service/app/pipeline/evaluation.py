@@ -26,7 +26,7 @@ from app.job_helper import (
 )
 from app.logger import get_logger
 from app.pipeline.taxonomy_quality import compute_graph_quality
-from app.pipeline.taxonomy_text import is_low_quality_label
+from app.pipeline.taxonomy_text import is_low_quality_label, tokenize
 
 log = get_logger(__name__)
 
@@ -199,8 +199,7 @@ def _compute_graph_connectivity_metrics(
     candidate_concept_ids: set[str],
 ) -> dict[str, Any]:
     concept_by_id = {str(c.id): c for c in concepts}
-    edge_dicts_all: list[dict[str, str]] = []
-    edge_dicts_candidate: list[dict[str, str]] = []
+    resolved_edges: list[tuple[str, str, str, str]] = []
     for e in edges:
         pid = str(e.parent_concept_id)
         cid = str(e.child_concept_id)
@@ -208,13 +207,43 @@ def _compute_graph_connectivity_metrics(
         child = concept_by_id.get(cid)
         if not parent or not child:
             continue
-        item = {"hypernym": parent.canonical, "hyponym": child.canonical}
-        edge_dicts_all.append(item)
-        if pid in candidate_concept_ids and cid in candidate_concept_ids:
-            edge_dicts_candidate.append(item)
+        resolved_edges.append((pid, cid, parent.canonical, child.canonical))
+
+    edge_dicts_all = [{"hypernym": p_lbl, "hyponym": c_lbl} for _pid, _cid, p_lbl, c_lbl in resolved_edges]
+    edge_dicts_candidate = [
+        {"hypernym": p_lbl, "hyponym": c_lbl}
+        for pid, cid, p_lbl, c_lbl in resolved_edges
+        if pid in candidate_concept_ids and cid in candidate_concept_ids
+    ]
 
     all_report = compute_graph_quality(edge_dicts_all, len(concepts))
     candidate_report = compute_graph_quality(edge_dicts_candidate, len(candidate_concept_ids))
+    by_language: dict[str, Any] = {}
+    for lang in sorted({(c.lang or "unknown") for c in concepts}):
+        lang_ids = {str(c.id) for c in concepts if (c.lang or "unknown") == lang}
+        lang_candidate_ids = lang_ids & candidate_concept_ids
+        lang_edges_all = [
+            {"hypernym": p_lbl, "hyponym": c_lbl}
+            for pid, cid, p_lbl, c_lbl in resolved_edges
+            if pid in lang_ids and cid in lang_ids
+        ]
+        lang_edges_candidate = [
+            {"hypernym": p_lbl, "hyponym": c_lbl}
+            for pid, cid, p_lbl, c_lbl in resolved_edges
+            if pid in lang_candidate_ids and cid in lang_candidate_ids
+        ]
+        by_language[lang] = {
+            "all_concepts": {
+                "denominator": len(lang_ids),
+                "edge_count": len(lang_edges_all),
+                **compute_graph_quality(lang_edges_all, len(lang_ids)),
+            },
+            "candidate_concepts": {
+                "denominator": len(lang_candidate_ids),
+                "edge_count": len(lang_edges_candidate),
+                **compute_graph_quality(lang_edges_candidate, len(lang_candidate_ids)),
+            },
+        }
     return {
         "all_concepts": {
             "denominator": len(concepts),
@@ -224,6 +253,92 @@ def _compute_graph_connectivity_metrics(
             "denominator": len(candidate_concept_ids),
             **candidate_report,
         },
+        "by_language": by_language,
+    }
+
+
+def _compute_fragmentation_and_risk_metrics(
+    concepts: list[Concept],
+    edges: list[TaxonomyEdge],
+    concept_doc_sets: dict[str, set[str]],
+) -> dict[str, Any]:
+    concept_by_id = {str(c.id): c for c in concepts}
+    node_ids = set(concept_by_id.keys())
+    adjacency: dict[str, set[str]] = defaultdict(set)
+    for node_id in node_ids:
+        adjacency.setdefault(node_id, set())
+    low_score_threshold = float(config.orientation_sanity_low_score_threshold)
+    low_score_edges = 0
+    orientation_risk_count = 0
+    orientation_risk_examples: list[dict[str, Any]] = []
+    for edge in edges:
+        pid = str(edge.parent_concept_id)
+        cid = str(edge.child_concept_id)
+        if pid not in concept_by_id or cid not in concept_by_id:
+            continue
+        adjacency[pid].add(cid)
+        adjacency[cid].add(pid)
+        score = float(edge.score or 0.0)
+        if score <= low_score_threshold:
+            low_score_edges += 1
+            parent_label = concept_by_id[pid].canonical
+            child_label = concept_by_id[cid].canonical
+            p_tokens = tokenize(parent_label)
+            c_tokens = tokenize(child_label)
+            p_df = len(concept_doc_sets.get(pid, set()))
+            c_df = len(concept_doc_sets.get(cid, set()))
+            lexical_subset = (
+                len(p_tokens) > len(c_tokens) and len(c_tokens) > 0 and set(c_tokens).issubset(set(p_tokens))
+            )
+            child_more_general = c_df >= (p_df + 2) and len(c_tokens) <= len(p_tokens)
+            if lexical_subset or child_more_general:
+                orientation_risk_count += 1
+                if len(orientation_risk_examples) < 12:
+                    orientation_risk_examples.append(
+                        {
+                            "parent": parent_label,
+                            "child": child_label,
+                            "score": round(score, 4),
+                            "lexical_subset": lexical_subset,
+                            "doc_freq_parent": p_df,
+                            "doc_freq_child": c_df,
+                        }
+                    )
+
+    visited: set[str] = set()
+    components: list[int] = []
+    for node in node_ids:
+        if node in visited:
+            continue
+        stack = [node]
+        size = 0
+        while stack:
+            cur = stack.pop()
+            if cur in visited:
+                continue
+            visited.add(cur)
+            size += 1
+            stack.extend(adjacency[cur] - visited)
+        components.append(size)
+
+    components.sort(reverse=True)
+    total_nodes = len(node_ids)
+    small_components = sum(1 for s in components if s <= 2)
+    isolated_components = sum(1 for s in components if s == 1)
+    small_component_nodes = sum(s for s in components if s <= 2)
+    return {
+        "component_count": len(components),
+        "largest_component_size": components[0] if components else 0,
+        "small_components_count": small_components,
+        "isolated_components_count": isolated_components,
+        "fragmentation_index": round(len(components) / max(1, total_nodes), 4),
+        "small_component_node_ratio": round(small_component_nodes / max(1, total_nodes), 4),
+        "low_score_threshold": round(low_score_threshold, 4),
+        "low_score_edge_count": low_score_edges,
+        "low_score_edge_ratio": round(low_score_edges / max(1, len(edges)), 4),
+        "orientation_risk_count": orientation_risk_count,
+        "orientation_risk_ratio": round(orientation_risk_count / max(1, len(edges)), 4),
+        "orientation_risk_examples": orientation_risk_examples,
     }
 
 
@@ -302,12 +417,25 @@ def handle_evaluate(session: Session, msg: dict) -> None:
         edges,
         candidate_concept_ids,
     )
+    risk_metrics = _compute_fragmentation_and_risk_metrics(concepts, edges, concept_doc_sets)
     structural["largest_component_ratio"] = (
         graph_connectivity.get("all_concepts", {}).get("largest_component_ratio", 0.0)
     )
     structural["hubness"] = graph_connectivity.get("all_concepts", {}).get("hubness", 0.0)
     structural["lexical_noise_rate"] = (
         graph_connectivity.get("all_concepts", {}).get("lexical_noise_rate", 0.0)
+    )
+    structural["component_count"] = risk_metrics.get("component_count", 0)
+    structural["fragmentation_index"] = risk_metrics.get("fragmentation_index", 0.0)
+    structural["small_components_count"] = risk_metrics.get("small_components_count", 0)
+    add_job_event(
+        session,
+        job_id,
+        "INFO",
+        f"Fragmentation/risk: components={risk_metrics.get('component_count', 0)}, "
+        f"fragmentation_index={risk_metrics.get('fragmentation_index', 0.0):.3f}, "
+        f"low_score_edges={risk_metrics.get('low_score_edge_count', 0)}, "
+        f"orientation_risk={risk_metrics.get('orientation_risk_count', 0)}",
     )
 
     # ── Compose quality report ───────────────────────────
@@ -316,6 +444,7 @@ def handle_evaluate(session: Session, msg: dict) -> None:
         "structural": structural,
         "graph_connectivity": graph_connectivity,
         "edge_confidence": edge_stats,
+        "risk": risk_metrics,
     }
 
     # ── Store on taxonomy version ────────────────────────

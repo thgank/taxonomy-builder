@@ -103,6 +103,33 @@ class Config:
     adaptive_target_lcr_gap_trigger: float = float(
         os.getenv("ADAPTIVE_TARGET_LCR_GAP_TRIGGER", "0.02")
     )
+    adaptive_target_component_ratio: float = float(
+        os.getenv("ADAPTIVE_TARGET_COMPONENT_RATIO", "0.30")
+    )
+    adaptive_target_component_min_count: int = int(
+        os.getenv("ADAPTIVE_TARGET_COMPONENT_MIN_COUNT", "6")
+    )
+    orientation_sanity_enabled: bool = (
+        os.getenv("ORIENTATION_SANITY_ENABLED", "true").lower() == "true"
+    )
+    orientation_sanity_low_score_threshold: float = float(
+        os.getenv("ORIENTATION_SANITY_LOW_SCORE_THRESHOLD", "0.62")
+    )
+    orientation_sanity_max_rewrites: int = int(
+        os.getenv("ORIENTATION_SANITY_MAX_REWRITES", "8")
+    )
+    root_consolidation_enabled: bool = (
+        os.getenv("ROOT_CONSOLIDATION_ENABLED", "true").lower() == "true"
+    )
+    root_consolidation_min_similarity: float = float(
+        os.getenv("ROOT_CONSOLIDATION_MIN_SIMILARITY", "0.18")
+    )
+    root_consolidation_max_root_outdegree: int = int(
+        os.getenv("ROOT_CONSOLIDATION_MAX_ROOT_OUTDEGREE", "2")
+    )
+    hearst_trigger_fallback_enabled: bool = (
+        os.getenv("HEARST_TRIGGER_FALLBACK_ENABLED", "true").lower() == "true"
+    )
 
     # Logging
     log_level: str = os.getenv("LOG_LEVEL", "INFO")

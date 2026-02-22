@@ -184,12 +184,15 @@ def anchor_connect_components(
         except Exception:
             semantic_scores = {}
 
-    boundary_candidates: list[tuple[float, str]] = []
+    boundary_candidates: list[tuple[float, float, float, str]] = []
     for anchor in base_anchors:
-        best_to_reps = max((semantic_scores.get((r, anchor), 0.0) for r in reps), default=0.0)
-        boundary_candidates.append((best_to_reps, anchor))
+        sem_values = [semantic_scores.get((r, anchor), 0.0) for r in reps]
+        best_to_reps = max(sem_values, default=0.0)
+        avg_to_reps = (sum(sem_values) / len(sem_values)) if sem_values else 0.0
+        boundary_support = sum(1 for sem in sem_values if sem >= 0.44)
+        boundary_candidates.append((float(boundary_support), best_to_reps, avg_to_reps, anchor))
     boundary_candidates.sort(reverse=True)
-    for _sim, anchor in boundary_candidates[: min(6, len(boundary_candidates))]:
+    for _cnt, _best, _avg, anchor in boundary_candidates[: min(8, len(boundary_candidates))]:
         if anchor not in anchors:
             anchors.append(anchor)
 
@@ -230,7 +233,7 @@ def anchor_connect_components(
             {
                 "hypernym": parent,
                 "hyponym": child,
-                "score": round(max(0.55, min(0.9, best_score)), 4),
+                "score": round(max(0.62, min(0.9, best_score)), 4),
                 "evidence": {
                     "method": "component_anchor_bridge",
                     "similarity": round(max(0.0, best_score), 4),

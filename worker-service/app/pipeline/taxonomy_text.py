@@ -60,6 +60,8 @@ HEARST_PATTERNS_EN = [
     (r"([\w\s]+?)\s*,?\s*including\s+([\w\s,]+?)(?:\.|,\s*and\s|\s+and\s)", "hypernym", "hyponyms"),
     (r"([\w\s]+?)\s*,?\s*especially\s+([\w\s,]+?)(?:\.|,)", "hypernym", "hyponyms"),
     (r"([\w\s]+?)\s+is\s+a\s+(?:kind|type|form|sort)\s+of\s+([\w\s]+?)(?:\.|,)", "hyponym", "hypernym"),
+    (r"([\w\s]+?)\s+is\s+one\s+of\s+the\s+([\w\s]+?)(?:\.|,)", "hyponym", "hypernym"),
+    (r"([\w\s]+?)\s+belongs\s+to\s+the\s+([\w\s]+?)(?:\.|,)", "hyponym", "hypernym"),
 ]
 
 HEARST_PATTERNS_RU = [
@@ -68,6 +70,8 @@ HEARST_PATTERNS_RU = [
     (r"([\w\s]+?)\s*,?\s*в\s+частности\s+([\w\s,]+?)(?:\.|,)", "hypernym", "hyponyms"),
     (r"([\w\s]+?)\s*,?\s*например\s+([\w\s,]+?)(?:\.|,)", "hypernym", "hyponyms"),
     (r"([\w\s]+?)\s+является\s+(?:видом|разновидностью|типом)\s+([\w\s]+?)(?:\.|,)", "hyponym", "hypernym"),
+    (r"([\w\s]+?)\s+является\s+одним\s+из\s+([\w\s]+?)(?:\.|,)", "hyponym", "hypernym"),
+    (r"([\w\s]+?)\s+относится\s+к\s+(?:классу|типу)\s+([\w\s]+?)(?:\.|,)", "hyponym", "hypernym"),
 ]
 
 HEARST_PATTERNS_KK = [
@@ -76,6 +80,7 @@ HEARST_PATTERNS_KK = [
     (r"([\w\s]+?)\s+сияқты\s+([\w\s,]+?)(?:\.|,)", "hypernym", "hyponyms"),
     (r"([\w\s]+?)\s+және\s+басқа\s+([\w\s]+?)(?:\.|,)", "hyponyms", "hypernym"),
     (r"([\w\s]+?)\s+([\w\s]+?)\s+түрі\s+болып\s+табылады(?:\.|,)", "hyponym", "hypernym"),
+    (r"([\w\s]+?)\s+([\w\s]+?)\s+қатарына\s+жатады(?:\.|,)", "hyponym", "hypernym"),
 ]
 
 
@@ -360,3 +365,99 @@ def extract_hearst_pairs(
                         },
                     })
     return pairs
+
+
+def extract_hearst_trigger_pairs(
+    chunks: list[DocumentChunk],
+    concept_set: set[str],
+    lang: str = "en",
+    concept_doc_freq: dict[str, int] | None = None,
+    max_pairs: int = 40,
+) -> list[dict[str, Any]]:
+    if max_pairs <= 0 or not chunks or not concept_set:
+        return []
+    if concept_doc_freq is None:
+        concept_doc_freq = {}
+
+    if lang.startswith("en"):
+        triggers = ("such as", "including", "especially", "is a type of", "is one of")
+    elif lang.startswith("ru"):
+        triggers = ("такие как", "в частности", "например", "является одним из", "относится к")
+    else:
+        triggers = ("мысалы", "атап айтқанда", "сияқты", "қатарына жатады")
+
+    concepts = [c for c in concept_set if len(tokenize(c)) <= 5 and len(c) >= 3]
+    concept_patterns = {
+        c: re.compile(rf"(?<!\w){re.escape(c)}(?!\w)", re.IGNORECASE)
+        for c in concepts
+    }
+    out: list[dict[str, Any]] = []
+    used: set[tuple[str, str]] = set()
+
+    for chunk in chunks:
+        text = chunk.text
+        text_l = text.lower()
+        matched_trigger = next((t for t in triggers if t in text_l), None)
+        if not matched_trigger:
+            continue
+
+        present = [c for c, pat in concept_patterns.items() if pat.search(text)]
+        if len(present) < 2:
+            continue
+        present = sorted(
+            set(present),
+            key=lambda c: (
+                -concept_doc_freq.get(c, 0),
+                len(tokenize(c)),
+                len(c),
+            ),
+        )
+        for i in range(len(present)):
+            for j in range(i + 1, len(present)):
+                a = present[i]
+                b = present[j]
+                if a == b:
+                    continue
+                overlap = _token_overlap_ratio(a, b)
+                contain = 1.0 if (a in b or b in a) else 0.0
+                if overlap < 0.20 and contain == 0.0:
+                    continue
+
+                at = tokenize(a)
+                bt = tokenize(b)
+                if concept_doc_freq.get(a, 0) >= concept_doc_freq.get(b, 0) + 2:
+                    parent, child = a, b
+                elif concept_doc_freq.get(b, 0) >= concept_doc_freq.get(a, 0) + 2:
+                    parent, child = b, a
+                else:
+                    parent, child = (a, b) if len(at) <= len(bt) else (b, a)
+                if parent == child:
+                    continue
+                if len(tokenize(parent)) == 1 and len(tokenize(child)) == 1:
+                    continue
+                key = (parent, child)
+                if key in used:
+                    continue
+
+                score = 0.58 + (0.10 * overlap) + (0.05 * contain)
+                if concept_doc_freq:
+                    df_gap = concept_doc_freq.get(parent, 0) - concept_doc_freq.get(child, 0)
+                    score += 0.03 if df_gap >= 1 else 0.0
+                score = max(0.60, min(0.82, score))
+                out.append(
+                    {
+                        "hypernym": parent,
+                        "hyponym": child,
+                        "score": round(score, 4),
+                        "evidence": {
+                            "chunk_id": str(chunk.id),
+                            "method": "hearst_trigger_fallback",
+                            "trigger": matched_trigger,
+                            "similarity": round(max(overlap, contain), 4),
+                        },
+                    }
+                )
+                used.add(key)
+                if len(out) >= max_pairs:
+                    return out
+    return out

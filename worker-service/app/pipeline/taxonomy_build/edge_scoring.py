@@ -5,9 +5,10 @@ from collections import defaultdict
 
 CONNECTIVITY_METHOD_MIN_SCORES = {
     "component_bridge": 0.56,
-    "component_anchor_bridge": 0.52,
+    "component_anchor_bridge": 0.62,
     "orphan_safe_link": 0.58,
     "connectivity_repair_fallback": 0.56,
+    "hearst_trigger_fallback": 0.62,
 }
 
 
@@ -73,4 +74,3 @@ def adaptive_bridge_budget(
     gap = max(0.0, target_lcr - current_lcr)
     adaptive = int(concept_count * (0.8 + (1.8 * gap)))
     return max(base_budget, min(max(8, concept_count), adaptive))
-

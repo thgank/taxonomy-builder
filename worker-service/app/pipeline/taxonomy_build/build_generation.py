@@ -16,7 +16,7 @@ from app.pipeline.taxonomy_build.pair_ops import (
 )
 from app.pipeline.taxonomy_embedding import build_embedding_hierarchy
 from app.pipeline.taxonomy_quality import limit_depth, remove_cycles
-from app.pipeline.taxonomy_text import extract_hearst_pairs
+from app.pipeline.taxonomy_text import extract_hearst_pairs, extract_hearst_trigger_pairs
 
 
 def _merge_duplicate_pairs(pairs: list[dict]) -> list[dict]:
@@ -49,21 +49,38 @@ def build_all_relation_candidates(ctx: BuildContext) -> list[dict]:
     if ctx.method in ("hearst", "hybrid"):
         hearst_pairs: list[dict] = []
         hearst_soft_pairs: list[dict] = []
+        hearst_trigger_pairs: list[dict] = []
         for lang, group_chunks in ctx.lang_groups.items():
-            hearst_pairs.extend(extract_hearst_pairs(group_chunks, concept_set, lang, soft_mode=False))
+            lang_hard = extract_hearst_pairs(group_chunks, concept_set, lang, soft_mode=False)
+            hearst_pairs.extend(lang_hard)
+            lang_soft: list[dict] = []
             if ctx.settings.hearst_soft_mode:
-                hearst_soft_pairs.extend(
-                    extract_hearst_pairs(group_chunks, concept_set, lang, soft_mode=True)
-                )
+                lang_soft = extract_hearst_pairs(group_chunks, concept_set, lang, soft_mode=True)
+                hearst_soft_pairs.extend(lang_soft)
+            if ctx.settings.hearst_trigger_fallback_enabled:
+                hard_min_expected = max(4, len(ctx.concepts) // 25)
+                current_lang_hearst = len(lang_hard) + len(lang_soft)
+                if current_lang_hearst < hard_min_expected:
+                    hearst_trigger_pairs.extend(
+                        extract_hearst_trigger_pairs(
+                            group_chunks,
+                            concept_set,
+                            lang=lang,
+                            concept_doc_freq=ctx.concept_doc_freq,
+                            max_pairs=max(6, ctx.settings.hearst_trigger_fallback_max_pairs // max(1, len(ctx.lang_groups))),
+                        )
+                    )
         if hearst_soft_pairs:
             hearst_pairs.extend(hearst_soft_pairs)
+        if hearst_trigger_pairs:
+            hearst_pairs.extend(hearst_trigger_pairs)
         all_pairs.extend(hearst_pairs)
         add_job_event(
             ctx.session,
             ctx.job_id,
             "INFO",
             f"Hearst patterns found {len(hearst_pairs)} relations across langs={ctx.lang_counts} "
-            f"(soft_mode={ctx.settings.hearst_soft_mode})",
+            f"(soft_mode={ctx.settings.hearst_soft_mode}, trigger_fallback={len(hearst_trigger_pairs)})",
         )
         update_job_status(ctx.session, ctx.job_id, "RUNNING", progress=30)
 

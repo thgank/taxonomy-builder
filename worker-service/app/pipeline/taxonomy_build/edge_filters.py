@@ -259,6 +259,17 @@ def edge_rejection_reason(
             return None
         if method == "component_anchor_bridge" and sim >= 0.58 and lex >= 0.18:
             return None
+        if method in {"hearst", "hearst_trigger_fallback"} and sim >= 0.16 and float(edge.get("score", 0.0)) >= 0.56:
+            return None
+        if (
+            recovery_mode
+            and method == "component_anchor_bridge"
+            and parent_validity >= 0.55
+            and sim >= 0.50
+            and effective_lex >= 0.12
+            and float(edge.get("score", 0.0)) >= max(0.54, recovery_score_floor - 0.04)
+        ):
+            return None
         if (
             recovery_mode
             and method in {

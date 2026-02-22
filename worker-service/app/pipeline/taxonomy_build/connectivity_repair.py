@@ -10,6 +10,7 @@ from app.pipeline.taxonomy_build.graph_metrics import (
     edge_key,
     largest_component_ratio_from_pairs,
 )
+from app.pipeline.taxonomy_build.edge_scoring import edge_method
 from app.pipeline.taxonomy_build.pair_ops import edge_rank_score
 from app.pipeline.taxonomy_text import is_low_quality_label
 
@@ -78,7 +79,7 @@ def trim_hub_edges(
             ct = TOKEN_RE.findall(child.lower())
             if len(pt) == 1 and len(ct) == 1:
                 continue
-            score = max(0.56, min(0.82, 0.60 + (0.22 * _lex(parent, child))))
+            score = max(0.62, min(0.84, 0.62 + (0.20 * _lex(parent, child))))
             return {
                 "hypernym": parent,
                 "hyponym": child,
@@ -146,6 +147,7 @@ def repair_connectivity(
     concept_doc_freq: dict[str, int],
     target_lcr: float,
     max_additional_edges: int,
+    target_component_count: int | None = None,
     recovery_mode: bool = False,
 ) -> tuple[list[dict], dict[str, int]]:
     stats: dict[str, int] = {
@@ -160,11 +162,21 @@ def repair_connectivity(
         "skipped_missing_component": 0,
         "skipped_same_component": 0,
         "selected": 0,
+        "initial_component_count": 0,
+        "final_component_count": 0,
     }
+    if target_component_count is not None:
+        stats["target_component_count"] = int(max(1, target_component_count))
     if max_additional_edges <= 0:
         return [], stats
     lcr = largest_component_ratio_from_pairs(current_pairs, concept_labels)
-    if lcr >= target_lcr:
+    initial_components = len(components_with_nodes(current_pairs, concept_labels))
+    stats["initial_component_count"] = initial_components
+    component_goal_met = (
+        target_component_count is None or initial_components <= int(max(1, target_component_count))
+    )
+    if lcr >= target_lcr and component_goal_met:
+        stats["final_component_count"] = initial_components
         return [], stats
 
     current_keys = {edge_key(e) for e in current_pairs}
@@ -183,6 +195,11 @@ def repair_connectivity(
             break
         comp_idx: dict[str, int] = {}
         comp_sizes: dict[int, int] = {}
+        component_count = len(comps)
+        need_component_reduction = (
+            target_component_count is not None
+            and component_count > int(max(1, target_component_count))
+        )
         largest_comp_id = 0
         largest_comp_size = 0
         for i, comp in enumerate(comps):
@@ -205,14 +222,26 @@ def repair_connectivity(
             p = e["hypernym"]
             c = e["hyponym"]
             score = float(e.get("score", 0.0))
+            post_lcr_phase = lcr >= target_lcr
             score_floor = 0.46 if recovery_mode else 0.50
+            if post_lcr_phase:
+                score_floor = 0.52 if recovery_mode else 0.56
             if score < score_floor:
                 stats["skipped_low_score"] += 1
                 continue
             if is_low_quality_label(p) or is_low_quality_label(c):
                 stats["skipped_low_quality_label"] += 1
                 continue
+            method = edge_method(e)
+            if post_lcr_phase and method == "connectivity_repair_fallback" and score < 0.60:
+                stats["skipped_low_score"] += 1
+                continue
+            if post_lcr_phase and need_component_reduction and method == "connectivity_repair_fallback":
+                stats["skipped_low_score"] += 1
+                continue
             parent_floor = 0.34 if recovery_mode else 0.38
+            if post_lcr_phase:
+                parent_floor = max(parent_floor, 0.42)
             if parent_validity_score(p, concept_doc_freq) < parent_floor:
                 stats["skipped_low_parent_validity"] += 1
                 continue
@@ -226,12 +255,20 @@ def repair_connectivity(
                 continue
             merged_size = comp_sizes.get(pi, 0) + comp_sizes.get(ci, 0)
             touches_largest = int(pi == largest_comp_id or ci == largest_comp_id)
-            priority = (touches_largest, merged_size, edge_rank_score(e, concept_doc_freq))
+            bridges_small = int(comp_sizes.get(pi, 0) <= 3 or comp_sizes.get(ci, 0) <= 3)
+            rank_score = edge_rank_score(e, concept_doc_freq)
+            if lcr < target_lcr:
+                priority = (touches_largest, merged_size, bridges_small, rank_score)
+            elif need_component_reduction:
+                priority = (bridges_small, merged_size, touches_largest, rank_score)
+            else:
+                priority = (touches_largest, merged_size, rank_score)
             if best_priority is None or priority > best_priority:
                 best_priority = priority
                 best_edge = e
 
         if not best_edge:
+            stats["final_component_count"] = component_count
             break
         repaired.append(best_edge)
         working.append(best_edge)
@@ -240,6 +277,13 @@ def repair_connectivity(
         used_candidate_keys.add(k)
         stats["selected"] += 1
         lcr = largest_component_ratio_from_pairs(working, concept_labels)
-        if lcr >= target_lcr:
+        new_component_count = len(components_with_nodes(working, concept_labels))
+        stats["final_component_count"] = new_component_count
+        component_goal_met = (
+            target_component_count is None or new_component_count <= int(max(1, target_component_count))
+        )
+        if lcr >= target_lcr and component_goal_met:
             break
+    if stats["final_component_count"] == 0:
+        stats["final_component_count"] = len(components_with_nodes(working, concept_labels))
     return repaired, stats

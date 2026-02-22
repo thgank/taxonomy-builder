@@ -106,6 +106,8 @@ version = json.loads(Path("/tmp/taxonomy_version_current.json").read_text())
 metrics = (version.get("qualityMetrics") or {})
 structural = metrics.get("structural") or {}
 edge_conf = metrics.get("edge_confidence") or {}
+connectivity = metrics.get("graph_connectivity") or {}
+risk = metrics.get("risk") or {}
 cur = {
     "total_nodes": structural.get("total_concepts"),
     "high_quality_nodes": structural.get("high_quality_concepts"),
@@ -115,9 +117,17 @@ cur = {
     "coverage_high_quality": structural.get("coverage_high_quality"),
     "coverage_candidate_set": structural.get("coverage_candidate_set"),
     "avg_edge_score": edge_conf.get("avg_score"),
+    "largest_component_ratio": (connectivity.get("all_concepts") or {}).get("largest_component_ratio"),
+    "hubness": (connectivity.get("all_concepts") or {}).get("hubness"),
+    "component_count": structural.get("component_count"),
+    "fragmentation_index": structural.get("fragmentation_index"),
+    "low_score_edges": risk.get("low_score_edge_count"),
+    "orientation_risk": risk.get("orientation_risk_count"),
 }
 print("=== Current Run Metrics ===")
 print(json.dumps(cur, indent=2))
+print("=== By-Language Graph Connectivity ===")
+print(json.dumps(connectivity.get("by_language") or {}, indent=2))
 PY
 
 echo "=== Last Events (tail) ==="

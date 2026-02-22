@@ -35,9 +35,20 @@ class BuildSettings:
     adaptive_target_lcr_min_coverage: float
     adaptive_target_lcr_min_components: int
     adaptive_target_lcr_gap_trigger: float
+    adaptive_target_component_ratio: float
+    adaptive_target_component_min_count: int
     coverage_recovery_enabled: bool
     coverage_recovery_target: float
     hubness_protected_max_per_parent: int
+    orientation_sanity_enabled: bool
+    orientation_sanity_low_score_threshold: float
+    orientation_sanity_max_rewrites: int
+    root_consolidation_enabled: bool
+    root_consolidation_min_similarity: float
+    root_consolidation_max_root_outdegree: int
+    root_consolidation_max_links: int
+    hearst_trigger_fallback_enabled: bool
+    hearst_trigger_fallback_max_pairs: int
     anchor_bridge_max_links: int
     connectivity_repair_max_links: int
     coverage_recovery_max_links: int
@@ -137,6 +148,18 @@ def load_build_settings(params: dict, concept_count: int) -> BuildSettings:
                 config.adaptive_target_lcr_gap_trigger,
             )
         ),
+        adaptive_target_component_ratio=float(
+            params.get(
+                "adaptive_target_component_ratio",
+                config.adaptive_target_component_ratio,
+            )
+        ),
+        adaptive_target_component_min_count=int(
+            params.get(
+                "adaptive_target_component_min_count",
+                config.adaptive_target_component_min_count,
+            )
+        ),
         coverage_recovery_enabled=bool(params.get("coverage_recovery_enabled", True)),
         coverage_recovery_target=float(params.get("coverage_recovery_target", 0.64)),
         hubness_protected_max_per_parent=int(
@@ -144,6 +167,45 @@ def load_build_settings(params: dict, concept_count: int) -> BuildSettings:
                 "hubness_protected_max_per_parent",
                 config.hubness_protected_max_per_parent,
             )
+        ),
+        orientation_sanity_enabled=bool(
+            params.get("orientation_sanity_enabled", config.orientation_sanity_enabled)
+        ),
+        orientation_sanity_low_score_threshold=float(
+            params.get(
+                "orientation_sanity_low_score_threshold",
+                config.orientation_sanity_low_score_threshold,
+            )
+        ),
+        orientation_sanity_max_rewrites=int(
+            params.get(
+                "orientation_sanity_max_rewrites",
+                config.orientation_sanity_max_rewrites,
+            )
+        ),
+        root_consolidation_enabled=bool(
+            params.get("root_consolidation_enabled", config.root_consolidation_enabled)
+        ),
+        root_consolidation_min_similarity=float(
+            params.get(
+                "root_consolidation_min_similarity",
+                config.root_consolidation_min_similarity,
+            )
+        ),
+        root_consolidation_max_root_outdegree=int(
+            params.get(
+                "root_consolidation_max_root_outdegree",
+                config.root_consolidation_max_root_outdegree,
+            )
+        ),
+        root_consolidation_max_links=int(
+            params.get("root_consolidation_max_links", max(6, concept_count // 8))
+        ),
+        hearst_trigger_fallback_enabled=bool(
+            params.get("hearst_trigger_fallback_enabled", config.hearst_trigger_fallback_enabled)
+        ),
+        hearst_trigger_fallback_max_pairs=int(
+            params.get("hearst_trigger_fallback_max_pairs", max(5, concept_count // 8))
         ),
         anchor_bridge_max_links=int(
             params.get("anchor_bridge_max_links", max(12, concept_count // 3))

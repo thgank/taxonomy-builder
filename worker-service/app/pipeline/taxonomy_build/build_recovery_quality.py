@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections import Counter
 
 from app.job_helper import add_job_event
@@ -16,7 +17,7 @@ from app.pipeline.taxonomy_build.edge_filters import (
     format_reason_counts,
     parent_validity_score,
 )
-from app.pipeline.taxonomy_build.edge_scoring import edge_min_score
+from app.pipeline.taxonomy_build.edge_scoring import edge_method, edge_min_score
 from app.pipeline.taxonomy_build.graph_metrics import (
     components_with_nodes,
     coverage_from_pairs,
@@ -34,8 +35,11 @@ from app.pipeline.taxonomy_linking import safe_link_orphans
 from app.pipeline.taxonomy_quality import (
     compute_graph_quality,
     evaluate_quality_gate,
+    remove_cycles,
 )
-from app.pipeline.taxonomy_text import is_low_quality_label
+from app.pipeline.taxonomy_text import is_low_quality_label, tokenize
+
+TOKEN_RE = re.compile(r"[^\W_]+", re.UNICODE)
 
 
 def _max_parent_outdegree(pairs: list[dict]) -> int:
@@ -82,6 +86,229 @@ def _effective_target_lcr(
     }
 
 
+def _target_component_count(ctx: BuildContext, component_count: int) -> int | None:
+    if not ctx.settings.adaptive_target_lcr_enabled:
+        return None
+    ratio = max(0.05, min(1.0, float(ctx.settings.adaptive_target_component_ratio)))
+    dynamic_target = int(round(len(ctx.concept_labels) * ratio))
+    target = max(int(ctx.settings.adaptive_target_component_min_count), dynamic_target)
+    target = min(max(1, component_count), target)
+    return target
+
+
+def _lexical_similarity(a: str, b: str) -> float:
+    at = set(TOKEN_RE.findall(a.lower()))
+    bt = set(TOKEN_RE.findall(b.lower()))
+    if not at or not bt:
+        return 0.0
+    return len(at & bt) / max(1, len(at | bt))
+
+
+def _run_root_consolidation(ctx: BuildContext, state: BuildState) -> None:
+    if not ctx.settings.root_consolidation_enabled:
+        return
+
+    parent_to_children: dict[str, set[str]] = {}
+    parents: Counter[str] = Counter()
+    children: Counter[str] = Counter()
+    nodes: set[str] = set(ctx.concept_labels)
+    for edge in state.unique_pairs:
+        parent = edge["hypernym"]
+        child = edge["hyponym"]
+        parent_to_children.setdefault(parent, set()).add(child)
+        parents[parent] += 1
+        children[child] += 1
+        nodes.add(parent)
+        nodes.add(child)
+
+    roots = [n for n in nodes if parents.get(n, 0) > 0 and children.get(n, 0) == 0]
+    if not roots:
+        return
+
+    max_links = max(1, int(ctx.settings.root_consolidation_max_links))
+    root_out_cap = max(1, int(ctx.settings.root_consolidation_max_root_outdegree))
+    min_similarity = max(0.0, float(ctx.settings.root_consolidation_min_similarity))
+
+    existing_keys = {edge_key(e) for e in state.unique_pairs}
+    added: list[dict] = []
+    rejected: Counter[str] = Counter()
+
+    def _descendants(start: str) -> set[str]:
+        seen: set[str] = set()
+        stack = list(parent_to_children.get(start, set()))
+        while stack:
+            node = stack.pop()
+            if node in seen:
+                continue
+            seen.add(node)
+            stack.extend(parent_to_children.get(node, set()) - seen)
+        return seen
+
+    root_candidates = sorted(
+        roots,
+        key=lambda n: (parents.get(n, 0), -parent_validity_score(n, ctx.concept_doc_freq)),
+    )
+    for root in root_candidates:
+        if len(added) >= max_links:
+            break
+        if parents.get(root, 0) > root_out_cap:
+            continue
+        blocked = _descendants(root) | {root}
+        best_parent = None
+        best_rank = -1.0
+        root_tokens = tokenize(root)
+        for candidate in nodes:
+            if candidate in blocked:
+                continue
+            if parent_validity_score(candidate, ctx.concept_doc_freq) < 0.42:
+                continue
+            cand_tokens = tokenize(candidate)
+            if not cand_tokens:
+                continue
+            lex = _lexical_similarity(candidate, root)
+            contain = 1.0 if (candidate.lower() in root.lower() or root.lower() in candidate.lower()) else 0.0
+            sim = (0.7 * lex) + (0.3 * contain)
+            if sim < min_similarity and not (lex >= 0.10 and parent_validity_score(candidate, ctx.concept_doc_freq) >= 0.62):
+                continue
+            generality = 0.06 if len(cand_tokens) <= len(root_tokens) else -0.02
+            hub_penalty = 0.02 * max(0, parents.get(candidate, 0) - 6)
+            rank = sim + (0.20 * parent_validity_score(candidate, ctx.concept_doc_freq)) + generality - hub_penalty
+            if rank > best_rank:
+                best_rank = rank
+                best_parent = candidate
+        if not best_parent:
+            continue
+        candidate_edge = {
+            "hypernym": best_parent,
+            "hyponym": root,
+            "score": round(max(0.52, min(0.84, 0.54 + (0.18 * best_rank))), 4),
+            "evidence": {
+                "method": "root_consolidation",
+                "similarity": round(max(0.0, best_rank), 4),
+            },
+        }
+        key = edge_key(candidate_edge)
+        if key in existing_keys:
+            continue
+        min_score = connectivity_min_score(
+            candidate_edge,
+            edge_min_score(candidate_edge, state.min_edge_accept_score, state.method_thresholds),
+            recovery_mode=True,
+        )
+        reason = edge_rejection_reason(
+            candidate_edge,
+            ctx.concept_doc_freq,
+            min_score,
+            recovery_mode=True,
+        )
+        if reason:
+            rejected[reason] += 1
+            continue
+        existing_keys.add(key)
+        parent_to_children.setdefault(best_parent, set()).add(root)
+        parents[best_parent] += 1
+        children[root] += 1
+        added.append(candidate_edge)
+
+    if added:
+        state.unique_pairs.extend(added)
+        state.unique_pairs = dedupe_pairs(state.unique_pairs)
+        state.unique_pairs = collapse_bidirectional_pairs(state.unique_pairs, ctx.concept_doc_freq)
+        state.unique_pairs = remove_cycles(state.unique_pairs)
+    add_job_event(
+        ctx.session,
+        ctx.job_id,
+        "INFO",
+        f"Root consolidation added {len(added)}/{len(roots)} edges "
+        f"(max_links={max_links}, rejected={format_reason_counts(rejected)})",
+    )
+
+
+def _run_orientation_sanity(ctx: BuildContext, state: BuildState) -> None:
+    if not ctx.settings.orientation_sanity_enabled:
+        return
+
+    threshold = float(ctx.settings.orientation_sanity_low_score_threshold)
+    max_rewrites = max(0, int(ctx.settings.orientation_sanity_max_rewrites))
+    if max_rewrites == 0:
+        return
+
+    existing_keys = {edge_key(e) for e in state.unique_pairs}
+    rewritten: list[dict] = []
+    remove_keys: set[tuple[str, str]] = set()
+    skipped_reasons: Counter[str] = Counter()
+    candidate_methods = {
+        "component_bridge",
+        "component_anchor_bridge",
+        "connectivity_repair_fallback",
+        "embedding_clustering_relaxed",
+        "hearst_trigger_fallback",
+    }
+
+    ranked_edges = sorted(state.unique_pairs, key=lambda e: float(e.get("score", 0.0)))
+    for edge in ranked_edges:
+        if len(rewritten) >= max_rewrites:
+            break
+        if float(edge.get("score", 0.0)) > threshold:
+            break
+        method = edge_method(edge)
+        if method not in candidate_methods:
+            continue
+        parent = edge["hypernym"]
+        child = edge["hyponym"]
+        parent_tokens = tokenize(parent)
+        child_tokens = tokenize(child)
+        parent_valid = parent_validity_score(parent, ctx.concept_doc_freq)
+        child_valid = parent_validity_score(child, ctx.concept_doc_freq)
+        child_better_parent = child_valid >= (parent_valid + 0.10)
+        lexical_subset = (
+            len(parent_tokens) > len(child_tokens)
+            and set(child_tokens).issubset(set(parent_tokens))
+            and len(child_tokens) > 0
+        )
+        if not (child_better_parent or lexical_subset):
+            skipped_reasons["not_suspicious"] += 1
+            continue
+
+        reversed_edge = dict(edge)
+        reversed_edge["hypernym"] = child
+        reversed_edge["hyponym"] = parent
+        reversed_edge["score"] = round(min(0.88, max(float(edge.get("score", 0.0)) + 0.04, 0.56)), 4)
+        evidence = reversed_edge.get("evidence", {})
+        if isinstance(evidence, dict):
+            evidence["method"] = "orientation_sanity_rewrite"
+            evidence["original_method"] = method
+            evidence["reason"] = "child_better_parent" if child_better_parent else "lexical_subset"
+            reversed_edge["evidence"] = evidence
+        rev_key = edge_key(reversed_edge)
+        if rev_key in existing_keys:
+            skipped_reasons["duplicate_reverse"] += 1
+            continue
+        min_score = edge_min_score(reversed_edge, state.min_edge_accept_score, state.method_thresholds)
+        reason = edge_rejection_reason(reversed_edge, ctx.concept_doc_freq, min_score, recovery_mode=True)
+        if reason:
+            skipped_reasons[reason] += 1
+            continue
+        remove_keys.add(edge_key(edge))
+        existing_keys.discard(edge_key(edge))
+        existing_keys.add(rev_key)
+        rewritten.append(reversed_edge)
+
+    if rewritten:
+        kept = [edge for edge in state.unique_pairs if edge_key(edge) not in remove_keys]
+        kept.extend(rewritten)
+        state.unique_pairs = dedupe_pairs(kept)
+        state.unique_pairs = collapse_bidirectional_pairs(state.unique_pairs, ctx.concept_doc_freq)
+        state.unique_pairs = remove_cycles(state.unique_pairs)
+    add_job_event(
+        ctx.session,
+        ctx.job_id,
+        "INFO",
+        f"Orientation sanity rewrote {len(rewritten)} edges "
+        f"(threshold={threshold:.2f}, max={max_rewrites}, skipped={format_reason_counts(skipped_reasons)})",
+    )
+
+
 def run_postprocess_and_recovery(ctx: BuildContext, state: BuildState) -> None:
     state.unique_pairs = dedupe_pairs(state.unique_pairs)
     state.unique_pairs = collapse_bidirectional_pairs(state.unique_pairs, ctx.concept_doc_freq)
@@ -105,6 +332,8 @@ def run_postprocess_and_recovery(ctx: BuildContext, state: BuildState) -> None:
     )
 
     _run_connectivity_repair(ctx, state, pre_prune_pairs, post_hub_lcr)
+    _run_root_consolidation(ctx, state)
+    _run_orientation_sanity(ctx, state)
     _run_coverage_recovery(ctx, state)
 
 
@@ -118,7 +347,11 @@ def _run_connectivity_repair(
         return
 
     effective_target_lcr, target_info = _effective_target_lcr(ctx, state, post_hub_lcr)
-    if post_hub_lcr >= effective_target_lcr:
+    target_component_count = _target_component_count(ctx, int(target_info["component_count"]))
+    component_goal_met = (
+        target_component_count is None or int(target_info["component_count"]) <= target_component_count
+    )
+    if post_hub_lcr >= effective_target_lcr and component_goal_met:
         return
 
     recovery_mode = (
@@ -134,6 +367,7 @@ def _run_connectivity_repair(
         f"effective={target_info['effective_target']:.3f}, "
         f"coverage={target_info['coverage']:.3f}, "
         f"components={target_info['component_count']}, "
+        f"component_target={target_component_count if target_component_count is not None else 'none'}, "
         f"adaptive={str(target_info['adaptive_enabled']).lower()}",
     )
     fallback_repair_candidates = fallback_connectivity_candidates(
@@ -174,6 +408,7 @@ def _run_connectivity_repair(
         concept_doc_freq=ctx.concept_doc_freq,
         target_lcr=effective_target_lcr,
         max_additional_edges=ctx.settings.connectivity_repair_max_links,
+        target_component_count=target_component_count,
         recovery_mode=recovery_mode,
     )
     add_job_event(
@@ -189,7 +424,14 @@ def _run_connectivity_repair(
         f"skip_same_component={repair_stats.get('skipped_same_component', 0)}, "
         f"skip_low_parent={repair_stats.get('skipped_low_parent_validity', 0)}, "
         f"skip_low_quality={repair_stats.get('skipped_low_quality_label', 0)}, "
-        f"skip_low_score={repair_stats.get('skipped_low_score', 0)}",
+        f"skip_low_score={repair_stats.get('skipped_low_score', 0)}, "
+        f"components={repair_stats.get('initial_component_count', 0)}->"
+        f"{repair_stats.get('final_component_count', 0)}"
+        + (
+            f"/{repair_stats.get('target_component_count', 0)}"
+            if repair_stats.get("target_component_count", 0) > 0
+            else ""
+        ),
     )
     if repaired:
         state.unique_pairs.extend(repaired)
