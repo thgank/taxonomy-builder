@@ -53,6 +53,20 @@ class BuildSettings:
     connectivity_repair_max_links: int
     coverage_recovery_max_links: int
     hearst_soft_mode: bool
+    adaptive_thresholds_enabled: bool
+    threshold_profile_name: str
+    edge_ranker_enabled: bool
+    edge_ranker_model_path: str
+    edge_ranker_blend_alpha: float
+    edge_ranker_min_confidence: float
+    evidence_linking_enabled: bool
+    evidence_top_k: int
+    evidence_max_pairs_per_job: int
+    active_learning_enabled: bool
+    active_learning_batch_size: int
+    active_learning_min_risk_score: float
+    per_lang_min_coverage: float
+    cross_lang_consistency_min: float
 
 
 def load_build_settings(params: dict, concept_count: int) -> BuildSettings:
@@ -217,4 +231,46 @@ def load_build_settings(params: dict, concept_count: int) -> BuildSettings:
             params.get("coverage_recovery_max_links", max(8, concept_count // 5))
         ),
         hearst_soft_mode=bool(params.get("hearst_soft_mode", True)),
+        adaptive_thresholds_enabled=bool(
+            params.get("adaptive_thresholds_enabled", config.adaptive_thresholds_enabled)
+        ),
+        threshold_profile_name=str(
+            params.get("threshold_profile_name", config.threshold_profile_name)
+        ),
+        edge_ranker_enabled=bool(
+            params.get("edge_ranker_enabled", config.edge_ranker_enabled)
+        ),
+        edge_ranker_model_path=str(
+            params.get("edge_ranker_model_path", config.edge_ranker_model_path)
+        ),
+        edge_ranker_blend_alpha=float(
+            params.get("edge_ranker_blend_alpha", config.edge_ranker_blend_alpha)
+        ),
+        edge_ranker_min_confidence=float(
+            params.get("edge_ranker_min_confidence", config.edge_ranker_min_confidence)
+        ),
+        evidence_linking_enabled=bool(
+            params.get("evidence_linking_enabled", config.evidence_linking_enabled)
+        ),
+        evidence_top_k=int(
+            params.get("evidence_top_k", config.evidence_top_k)
+        ),
+        evidence_max_pairs_per_job=int(
+            params.get("evidence_max_pairs_per_job", config.evidence_max_pairs_per_job)
+        ),
+        active_learning_enabled=bool(
+            params.get("active_learning_enabled", config.active_learning_enabled)
+        ),
+        active_learning_batch_size=int(
+            params.get("active_learning_batch_size", config.active_learning_batch_size)
+        ),
+        active_learning_min_risk_score=float(
+            params.get("active_learning_min_risk_score", config.active_learning_min_risk_score)
+        ),
+        per_lang_min_coverage=float(
+            params.get("per_lang_min_coverage", config.per_lang_min_coverage)
+        ),
+        cross_lang_consistency_min=float(
+            params.get("cross_lang_consistency_min", config.cross_lang_consistency_min)
+        ),
     )

@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 from app.config import config
 from app.db import (
     Concept, ConceptOccurrence, TaxonomyEdge, TaxonomyVersion, Document, DocumentChunk,
+    TaxonomyEdgeCandidate, TaxonomyEdgeLabel,
 )
 from app.job_helper import (
     update_job_status, add_job_event, update_taxonomy_status, is_job_cancelled,
@@ -342,6 +343,149 @@ def _compute_fragmentation_and_risk_metrics(
     }
 
 
+def _compute_manual_review_metrics(edges: list[TaxonomyEdge]) -> dict[str, Any]:
+    reviewed = 0
+    disagreed = 0
+    approved = 0
+    for edge in edges:
+        if edge.approved is None:
+            continue
+        reviewed += 1
+        if bool(edge.approved):
+            approved += 1
+        else:
+            disagreed += 1
+    disagreement_rate = (disagreed / reviewed) if reviewed else 0.0
+    approval_rate = (approved / reviewed) if reviewed else 0.0
+    return {
+        "reviewed_edges": reviewed,
+        "approved_edges": approved,
+        "rejected_edges": disagreed,
+        "manual_disagreement_rate": round(disagreement_rate, 4),
+        "manual_approval_rate": round(approval_rate, 4),
+    }
+
+
+def _compute_cross_lang_consistency(
+    concepts: list[Concept],
+    edges: list[TaxonomyEdge],
+) -> dict[str, Any]:
+    concept_by_id = {str(c.id): c for c in concepts}
+
+    def _anchor(label: str) -> str:
+        tokens = tokenize(label or "")
+        return " ".join(tokens[:4])
+
+    edge_lang_map: dict[tuple[str, str], set[str]] = defaultdict(set)
+    comparable_pairs = 0
+    consistent_pairs = 0
+    sample_conflicts: list[dict[str, Any]] = []
+    for edge in edges:
+        parent = concept_by_id.get(str(edge.parent_concept_id))
+        child = concept_by_id.get(str(edge.child_concept_id))
+        if not parent or not child:
+            continue
+        p_anchor = _anchor(parent.canonical)
+        c_anchor = _anchor(child.canonical)
+        if not p_anchor or not c_anchor:
+            continue
+        if p_anchor == c_anchor:
+            continue
+        lang = ((parent.lang or child.lang or "unknown").lower()[:2])
+        edge_lang_map[(p_anchor, c_anchor)].add(lang)
+
+    inverse_map = {k: (k[1], k[0]) for k in edge_lang_map.keys()}
+    for pair, langs in edge_lang_map.items():
+        inv_pair = inverse_map.get(pair)
+        inv_langs = edge_lang_map.get(inv_pair, set()) if inv_pair else set()
+        union_langs = langs | inv_langs
+        if len(union_langs) < 2:
+            continue
+        comparable_pairs += 1
+        if len(inv_langs) == 0:
+            consistent_pairs += 1
+        elif len(sample_conflicts) < 10:
+            sample_conflicts.append(
+                {
+                    "pair": {"parent_anchor": pair[0], "child_anchor": pair[1]},
+                    "langs_forward": sorted(langs),
+                    "langs_reverse": sorted(inv_langs),
+                }
+            )
+
+    consistency = (consistent_pairs / comparable_pairs) if comparable_pairs else 1.0
+    return {
+        "comparable_pairs": comparable_pairs,
+        "consistent_pairs": consistent_pairs,
+        "cross_lang_consistency": round(consistency, 4),
+        "cross_lang_consistency_target": round(float(config.cross_lang_consistency_min), 4),
+        "meets_target": consistency >= float(config.cross_lang_consistency_min),
+        "sample_conflicts": sample_conflicts,
+    }
+
+
+def _compute_quality_score_10(
+    structural: dict[str, Any],
+    graph_connectivity: dict[str, Any],
+    risk: dict[str, Any],
+    manual_review: dict[str, Any],
+) -> float:
+    coverage_candidate = float(structural.get("coverage_candidate_set", 0.0) or 0.0)
+    lcr = float((graph_connectivity.get("all_concepts") or {}).get("largest_component_ratio", 0.0) or 0.0)
+    hubness = float((graph_connectivity.get("all_concepts") or {}).get("hubness", 0.0) or 0.0)
+    fragmentation = float(risk.get("fragmentation_index", 1.0) or 1.0)
+    low_score_tail = float(risk.get("low_score_edge_ratio", 1.0) or 1.0)
+    disagreement = float(manual_review.get("manual_disagreement_rate", 0.0) or 0.0)
+
+    hubness_penalty = min(1.0, max(0.0, hubness / 8.0))
+    score = (
+        0.30 * coverage_candidate
+        + 0.25 * lcr
+        + 0.15 * (1.0 - min(1.0, fragmentation))
+        + 0.10 * (1.0 - min(1.0, low_score_tail))
+        + 0.10 * (1.0 - hubness_penalty)
+        + 0.10 * (1.0 - min(1.0, disagreement))
+    )
+    return round(max(0.0, min(10.0, 10.0 * score)), 3)
+
+
+def _compute_active_learning_metrics(
+    session: Session,
+    taxonomy_version_id: str,
+    collection_id: str,
+) -> dict[str, Any]:
+    top_risk = (
+        session.query(TaxonomyEdgeCandidate)
+        .filter(TaxonomyEdgeCandidate.taxonomy_version_id == taxonomy_version_id)
+        .order_by(TaxonomyEdgeCandidate.risk_score.desc())
+        .limit(25)
+        .all()
+    )
+    label_count = (
+        session.query(TaxonomyEdgeLabel)
+        .filter(TaxonomyEdgeLabel.collection_id == collection_id)
+        .count()
+    )
+    accepted = sum(1 for row in top_risk if (row.decision or "") == "accepted")
+    rejected = sum(1 for row in top_risk if (row.decision or "") == "rejected")
+    return {
+        "top_risk_candidates": [
+            {
+                "parent": row.parent_label,
+                "child": row.child_label,
+                "method": row.method,
+                "risk_score": round(float(row.risk_score or 0.0), 4),
+                "decision": row.decision,
+            }
+            for row in top_risk[:12]
+        ],
+        "top_risk_count": len(top_risk),
+        "top_risk_accepted": accepted,
+        "top_risk_rejected": rejected,
+        "historical_label_count": int(label_count),
+    }
+
+
 def handle_evaluate(session: Session, msg: dict) -> None:
     """Evaluation handler: compute quality metrics and store on taxonomy version."""
     job_id = str(msg.get("jobId") or msg.get("job_id"))
@@ -418,6 +562,9 @@ def handle_evaluate(session: Session, msg: dict) -> None:
         candidate_concept_ids,
     )
     risk_metrics = _compute_fragmentation_and_risk_metrics(concepts, edges, concept_doc_sets)
+    manual_review = _compute_manual_review_metrics(edges)
+    cross_lang_consistency = _compute_cross_lang_consistency(concepts, edges)
+    active_learning = _compute_active_learning_metrics(session, taxonomy_version_id, collection_id)
     structural["largest_component_ratio"] = (
         graph_connectivity.get("all_concepts", {}).get("largest_component_ratio", 0.0)
     )
@@ -428,6 +575,12 @@ def handle_evaluate(session: Session, msg: dict) -> None:
     structural["component_count"] = risk_metrics.get("component_count", 0)
     structural["fragmentation_index"] = risk_metrics.get("fragmentation_index", 0.0)
     structural["small_components_count"] = risk_metrics.get("small_components_count", 0)
+    for lang, values in (structural.get("by_language") or {}).items():
+        coverage_lang = float(values.get("coverage", 0.0) or 0.0)
+        values["min_coverage_target"] = round(float(config.per_lang_min_coverage), 4)
+        values["meets_min_coverage"] = coverage_lang >= float(config.per_lang_min_coverage)
+        structural["by_language"][lang] = values
+
     add_job_event(
         session,
         job_id,
@@ -435,16 +588,28 @@ def handle_evaluate(session: Session, msg: dict) -> None:
         f"Fragmentation/risk: components={risk_metrics.get('component_count', 0)}, "
         f"fragmentation_index={risk_metrics.get('fragmentation_index', 0.0):.3f}, "
         f"low_score_edges={risk_metrics.get('low_score_edge_count', 0)}, "
-        f"orientation_risk={risk_metrics.get('orientation_risk_count', 0)}",
+        f"orientation_risk={risk_metrics.get('orientation_risk_count', 0)}, "
+        f"manual_disagreement={manual_review.get('manual_disagreement_rate', 0.0):.3f}, "
+        f"cross_lang_consistency={cross_lang_consistency.get('cross_lang_consistency', 1.0):.3f}",
     )
 
     # ── Compose quality report ───────────────────────────
+    quality_score_10 = _compute_quality_score_10(
+        structural=structural,
+        graph_connectivity=graph_connectivity,
+        risk=risk_metrics,
+        manual_review=manual_review,
+    )
     quality_metrics = {
         "schema_version": 2,
         "structural": structural,
         "graph_connectivity": graph_connectivity,
         "edge_confidence": edge_stats,
         "risk": risk_metrics,
+        "manual_review": manual_review,
+        "cross_lang_consistency": cross_lang_consistency,
+        "active_learning": active_learning,
+        "quality_score_10": quality_score_10,
     }
 
     # ── Store on taxonomy version ────────────────────────
@@ -463,7 +628,8 @@ def handle_evaluate(session: Session, msg: dict) -> None:
         f"coverage_hq={structural.get('coverage_high_quality', 0):.1%}, "
         f"coverage_candidate={structural.get('coverage_candidate_set', 0):.1%}, "
         f"edges={structural.get('total_edges', 0)}, "
-        f"avg_confidence={edge_stats.get('avg_score', 0):.3f}",
+        f"avg_confidence={edge_stats.get('avg_score', 0):.3f}, "
+        f"quality_score_10={quality_score_10:.2f}",
     )
 
     log.info(

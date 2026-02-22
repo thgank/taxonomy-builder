@@ -26,6 +26,10 @@ class BuildContext:
     dominant_lang: str
     concept_labels: list[str]
     method: str
+    threshold_profile_id: str | None
+    threshold_profile: dict
+    ranker: object | None
+    evidence_index: dict[str, list[dict]]
 
 
 @dataclass
@@ -34,3 +38,5 @@ class BuildState:
     connectivity_candidate_pool: list[dict]
     min_edge_accept_score: float
     method_thresholds: dict[str, float]
+    candidate_logs: list[dict]
+    ranker_enabled: bool

@@ -1,11 +1,20 @@
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 from difflib import SequenceMatcher
 from typing import Callable
 
 from app.config import config
 from app.pipeline.taxonomy_text import is_low_quality_label, tokenize
+
+_DIR_PATTERNS = (
+    r"\b{parent}\b.{0,80}\bsuch as\b.{0,80}\b{child}\b",
+    r"\b{child}\b.{0,80}\bis (?:a|an|one of)\b.{0,80}\b{parent}\b",
+    r"\b{child}\b.{0,80}\bявляется\b.{0,80}\b{parent}\b",
+    r"\b{parent}\b.{0,80}\bтакие как\b.{0,80}\b{child}\b",
+    r"\b{parent}\b.{0,80}\bмысалы\b.{0,80}\b{child}\b",
+)
 
 
 def _label_similarity(a: str, b: str) -> float:
@@ -21,6 +30,90 @@ def _label_similarity(a: str, b: str) -> float:
     return (0.45 * jaccard) + (0.40 * seq) + (0.15 * contain)
 
 
+def _top_snippets(label: str, evidence_index: dict[str, list[dict]], top_k: int) -> list[dict]:
+    return list((evidence_index or {}).get(label, []))[: max(1, top_k)]
+
+
+def _directional_evidence_score(
+    parent: str,
+    child: str,
+    parent_snippets: list[dict],
+    child_snippets: list[dict],
+) -> tuple[float, list[dict]]:
+    parent_l = parent.lower()
+    child_l = child.lower()
+    parent_docs = {s.get("document_id") for s in parent_snippets if s.get("document_id")}
+    child_docs = {s.get("document_id") for s in child_snippets if s.get("document_id")}
+    shared_docs = parent_docs & child_docs
+    shared_doc_ratio = (len(shared_docs) / max(1, len(parent_docs | child_docs))) if (parent_docs or child_docs) else 0.0
+
+    direction_hits = 0
+    contradiction_hits = 0
+    snippets: list[dict] = []
+    for src, bucket in (("parent", parent_snippets), ("child", child_snippets)):
+        for item in bucket:
+            snippet = str(item.get("snippet") or "").strip()
+            if not snippet:
+                continue
+            snippet_l = snippet.lower()
+            if parent_l not in snippet_l or child_l not in snippet_l:
+                continue
+            matched = False
+            for pattern in _DIR_PATTERNS:
+                patt = pattern.replace("{parent}", re.escape(parent_l)).replace("{child}", re.escape(child_l))
+                if re.search(patt, snippet_l, flags=re.IGNORECASE):
+                    direction_hits += 1
+                    matched = True
+                    snippets.append(
+                        {
+                            "source": src,
+                            "document_id": item.get("document_id"),
+                            "lang": item.get("lang"),
+                            "snippet": snippet[: int(max(60, config.evidence_window_chars))],
+                            "directional_hit": True,
+                        }
+                    )
+                    break
+            if not matched and (
+                (child_l in snippet_l and f" {parent_l} " in snippet_l and " such as " in snippet_l)
+                or (parent_l in snippet_l and f" {child_l} " in snippet_l and " явля" in snippet_l)
+            ):
+                contradiction_hits += 1
+
+    directional = min(1.0, direction_hits / 3.0)
+    contradiction_penalty = min(0.35, 0.12 * contradiction_hits)
+    score = max(0.0, (0.60 * directional) + (0.40 * shared_doc_ratio) - contradiction_penalty)
+    return score, snippets[: max(1, config.evidence_top_k)]
+
+
+def attach_retrieval_evidence(
+    edge: dict,
+    evidence_index: dict[str, list[dict]] | None,
+    top_k: int,
+    evidence_weight: float = 0.12,
+) -> dict:
+    if not evidence_index:
+        return edge
+    parent = edge.get("hypernym", "")
+    child = edge.get("hyponym", "")
+    if not parent or not child:
+        return edge
+    parent_snippets = _top_snippets(parent, evidence_index, top_k)
+    child_snippets = _top_snippets(child, evidence_index, top_k)
+    if not parent_snippets and not child_snippets:
+        return edge
+    evidence_score, snippets = _directional_evidence_score(parent, child, parent_snippets, child_snippets)
+    blended = (1.0 - evidence_weight) * float(edge.get("score", 0.0)) + (evidence_weight * evidence_score)
+    edge["score"] = round(max(0.0, min(1.0, blended)), 4)
+    ev = edge.get("evidence", {})
+    if isinstance(ev, dict):
+        ev["retrieval_evidence_score"] = round(evidence_score, 4)
+        ev["retrieval_snippets"] = snippets
+        ev["retrieval_snippets_count"] = len(snippets)
+        edge["evidence"] = ev
+    return edge
+
+
 def safe_link_orphans(
     edges: list[dict],
     concept_labels: list[str],
@@ -31,6 +124,9 @@ def safe_link_orphans(
     concept_scores: dict[str, float] | None = None,
     min_orphan_doc_freq: int = 2,
     min_orphan_score: float = 0.25,
+    evidence_index: dict[str, list[dict]] | None = None,
+    evidence_top_k: int = 3,
+    evidence_weight: float = 0.12,
 ) -> list[dict]:
     if not concept_labels or max_links <= 0:
         return []
@@ -91,7 +187,7 @@ def safe_link_orphans(
             continue
 
         local_parent_load[best_parent] += 1
-        added.append({
+        candidate = {
             "hypernym": best_parent,
             "hyponym": orphan,
             "score": round(min(0.95, best_score), 4),
@@ -100,7 +196,14 @@ def safe_link_orphans(
                 "threshold": threshold,
                 "similarity": round(best_score, 4),
             },
-        })
+        }
+        candidate = attach_retrieval_evidence(
+            candidate,
+            evidence_index=evidence_index,
+            top_k=evidence_top_k,
+            evidence_weight=evidence_weight,
+        )
+        added.append(candidate)
         if len(added) >= max_links:
             break
 
@@ -147,6 +250,9 @@ def bridge_components(
     min_semantic_similarity: float | None = None,
     max_new_children_per_parent: int = 2,
     parent_load_penalty_alpha: float = 0.06,
+    evidence_index: dict[str, list[dict]] | None = None,
+    evidence_top_k: int = 3,
+    evidence_weight: float = 0.12,
 ) -> list[dict]:
     if max_links <= 0:
         return []
@@ -302,6 +408,12 @@ def bridge_components(
             evidence["similarity"] = round(adjusted_similarity, 4)
             edge["evidence"] = evidence
         edge.pop("_bridge_meta", None)
+        edge = attach_retrieval_evidence(
+            edge,
+            evidence_index=evidence_index,
+            top_k=evidence_top_k,
+            evidence_weight=evidence_weight,
+        )
         links.append(edge)
         local_parent_load[parent] += 1
         if len(links) >= max_links:

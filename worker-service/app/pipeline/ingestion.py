@@ -76,6 +76,8 @@ EXTRACTORS: dict[str, Any] = {
 
 
 def _clean_extracted_text(text: str) -> str:
+    if "\x00" in text:
+        text = text.replace("\x00", " ")
     cleaned_lines: list[str] = []
     for raw_line in text.splitlines():
         line = raw_line.strip()
@@ -149,6 +151,46 @@ def split_into_chunks(text: str, max_size: int | None = None) -> list[dict]:
     return chunks
 
 
+def _merge_short_chunks(
+    chunks: list[dict],
+    max_size: int,
+    min_chars: int,
+) -> list[dict]:
+    if not chunks:
+        return []
+    min_chars = max(1, int(min_chars))
+    merged: list[dict] = []
+    buf: dict | None = None
+
+    for chunk in chunks:
+        text = str(chunk.get("text", "")).strip()
+        if not text:
+            continue
+        current = {
+            "text": text,
+            "char_start": int(chunk.get("char_start", 0) or 0),
+            "char_end": int(chunk.get("char_end", 0) or 0),
+        }
+        if buf is None:
+            buf = current
+            continue
+
+        should_merge = len(buf["text"]) < min_chars or len(current["text"]) < min_chars
+        if should_merge:
+            candidate = f"{buf['text']} {current['text']}".strip()
+            if len(candidate) <= max_size:
+                buf["text"] = candidate
+                buf["char_end"] = current["char_end"]
+                continue
+
+        merged.append(buf)
+        buf = current
+
+    if buf is not None:
+        merged.append(buf)
+    return merged
+
+
 # ── Handler ──────────────────────────────────────────────
 
 def handle_import(session: Session, msg: dict) -> None:
@@ -217,6 +259,11 @@ def handle_import(session: Session, msg: dict) -> None:
             ).delete()
 
             raw_chunks = split_into_chunks(text, max_size=int(chunk_size_param))
+            raw_chunks = _merge_short_chunks(
+                raw_chunks,
+                max_size=int(chunk_size_param),
+                min_chars=config.chunk_min_chars,
+            )
 
             for ci, chunk_data in enumerate(raw_chunks):
                 chunk = DocumentChunk(

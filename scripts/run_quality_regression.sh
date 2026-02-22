@@ -122,7 +122,11 @@ cur = {
     "component_count": structural.get("component_count"),
     "fragmentation_index": structural.get("fragmentation_index"),
     "low_score_edges": risk.get("low_score_edge_count"),
+    "low_score_edge_ratio": risk.get("low_score_edge_ratio"),
     "orientation_risk": risk.get("orientation_risk_count"),
+    "manual_disagreement_rate": (metrics.get("manual_review") or {}).get("manual_disagreement_rate"),
+    "cross_lang_consistency": (metrics.get("cross_lang_consistency") or {}).get("cross_lang_consistency"),
+    "quality_score_10": metrics.get("quality_score_10"),
 }
 print("=== Current Run Metrics ===")
 print(json.dumps(cur, indent=2))
@@ -155,11 +159,29 @@ def m(path: Path):
         "coverage_candidate_set": structural.get("coverage_candidate_set") or 0.0,
         "edge_count": d.get("edgeCount") or 0.0,
         "avg_edge_score": edge_conf.get("avg_score") or 0.0,
+        "largest_component_ratio": ((qm.get("graph_connectivity") or {}).get("all_concepts") or {}).get("largest_component_ratio") or 0.0,
+        "fragmentation_index": (qm.get("risk") or {}).get("fragmentation_index") or 0.0,
+        "low_score_edge_ratio": (qm.get("risk") or {}).get("low_score_edge_ratio") or 0.0,
+        "manual_disagreement_rate": (qm.get("manual_review") or {}).get("manual_disagreement_rate") or 0.0,
+        "cross_lang_consistency": (qm.get("cross_lang_consistency") or {}).get("cross_lang_consistency") or 0.0,
+        "quality_score_10": qm.get("quality_score_10") or 0.0,
     }
 cur = m(Path("/tmp/taxonomy_version_current.json"))
 base = m(Path("/tmp/taxonomy_version_baseline.json"))
 print("=== Baseline Delta (current - baseline) ===")
-for k in ("coverage", "coverage_high_quality", "coverage_candidate_set", "edge_count", "avg_edge_score"):
+for k in (
+    "coverage",
+    "coverage_high_quality",
+    "coverage_candidate_set",
+    "edge_count",
+    "avg_edge_score",
+    "largest_component_ratio",
+    "fragmentation_index",
+    "low_score_edge_ratio",
+    "manual_disagreement_rate",
+    "cross_lang_consistency",
+    "quality_score_10",
+):
     print(f"{k}: {cur[k]:.6f} - {base[k]:.6f} = {cur[k]-base[k]:+.6f}")
 PY
 fi

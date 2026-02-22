@@ -1,6 +1,10 @@
 package com.taxonomy.api.controller;
 
 import com.taxonomy.api.dto.request.CreateEdgeRequest;
+import com.taxonomy.api.dto.request.CreateEdgeLabelRequest;
+import com.taxonomy.api.dto.request.CreateReleaseRequest;
+import com.taxonomy.api.dto.request.PromoteReleaseRequest;
+import com.taxonomy.api.dto.request.RollbackReleaseRequest;
 import com.taxonomy.api.dto.request.UpdateEdgeRequest;
 import com.taxonomy.api.dto.response.*;
 import com.taxonomy.api.service.TaxonomyService;
@@ -81,6 +85,20 @@ public class TaxonomyController {
         return taxonomyService.updateEdge(taxId, edgeId, req);
     }
 
+    @PostMapping("/api/taxonomies/{taxId:[0-9a-fA-F\\-]{36}}/labels")
+    @ResponseStatus(HttpStatus.CREATED)
+    @Operation(summary = "Create manual label for candidate edge")
+    public TaxonomyEdgeLabelResponse createEdgeLabel(@PathVariable UUID taxId,
+                                                     @RequestBody CreateEdgeLabelRequest req) {
+        return taxonomyService.createEdgeLabel(taxId, req);
+    }
+
+    @GetMapping("/api/taxonomies/{taxId:[0-9a-fA-F\\-]{36}}/labels")
+    @Operation(summary = "List edge labels for taxonomy version")
+    public Page<TaxonomyEdgeLabelResponse> getEdgeLabels(@PathVariable UUID taxId, Pageable pageable) {
+        return taxonomyService.getEdgeLabels(taxId, pageable);
+    }
+
     /* ── Concepts ────────────────────────────────────────── */
 
     @GetMapping("/api/taxonomies/{taxId:[0-9a-fA-F\\-]{36}}/concepts/search")
@@ -119,5 +137,38 @@ public class TaxonomyController {
         }
 
         return ResponseEntity.ok(taxonomyService.export(taxId, includeOrphans));
+    }
+
+    /* ── Releases / Canary / Rollback ──────────────────── */
+
+    @GetMapping("/api/collections/{id}/releases")
+    @Operation(summary = "List taxonomy releases for collection")
+    public List<TaxonomyReleaseResponse> listReleases(@PathVariable UUID id) {
+        return taxonomyService.listReleases(id);
+    }
+
+    @PostMapping("/api/collections/{id}/releases")
+    @ResponseStatus(HttpStatus.CREATED)
+    @Operation(summary = "Create release from taxonomy version")
+    public TaxonomyReleaseResponse createRelease(@PathVariable UUID id,
+                                                 @RequestBody CreateReleaseRequest req) {
+        return taxonomyService.createRelease(id, req);
+    }
+
+    @PostMapping("/api/collections/{id}/releases/{releaseId:[0-9a-fA-F\\-]{36}}/promote")
+    @Operation(summary = "Promote release to active/canary channel")
+    public TaxonomyReleaseResponse promoteRelease(@PathVariable UUID id,
+                                                  @PathVariable UUID releaseId,
+                                                  @RequestBody(required = false) PromoteReleaseRequest req) {
+        PromoteReleaseRequest payload = req != null ? req : new PromoteReleaseRequest("active", 100, null);
+        return taxonomyService.promoteRelease(id, releaseId, payload);
+    }
+
+    @PostMapping("/api/collections/{id}/releases/{releaseId:[0-9a-fA-F\\-]{36}}/rollback")
+    @Operation(summary = "Rollback channel to previously known release")
+    public TaxonomyReleaseResponse rollbackRelease(@PathVariable UUID id,
+                                                   @PathVariable UUID releaseId,
+                                                   @RequestBody RollbackReleaseRequest req) {
+        return taxonomyService.rollbackRelease(id, releaseId, req);
     }
 }

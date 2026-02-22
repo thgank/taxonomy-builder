@@ -65,6 +65,45 @@ def edge_min_score(edge: dict, default_score: float, method_thresholds: dict[str
     return float(default_score)
 
 
+def threshold_from_profile(
+    profile: dict,
+    method: str,
+    lang: str | None,
+    fallback: float,
+) -> float:
+    if not profile:
+        return float(fallback)
+    lang_key = (lang or "").lower()[:2]
+    lang_profiles = profile.get("lang_method_thresholds", {})
+    if isinstance(lang_profiles, dict):
+        lang_row = lang_profiles.get(lang_key, {})
+        if isinstance(lang_row, dict) and method in lang_row:
+            return float(lang_row[method])
+    method_profiles = profile.get("method_thresholds", {})
+    if isinstance(method_profiles, dict) and method in method_profiles:
+        return float(method_profiles[method])
+    if "min_edge_accept_score" in profile:
+        return float(profile["min_edge_accept_score"])
+    return float(fallback)
+
+
+def blend_scores(
+    base_score: float,
+    ranker_score: float | None = None,
+    evidence_score: float | None = None,
+    ranker_alpha: float = 0.45,
+    evidence_alpha: float = 0.15,
+) -> float:
+    score = float(base_score)
+    if ranker_score is not None:
+        a = max(0.0, min(1.0, float(ranker_alpha)))
+        score = ((1.0 - a) * score) + (a * float(ranker_score))
+    if evidence_score is not None:
+        b = max(0.0, min(0.4, float(evidence_alpha)))
+        score = ((1.0 - b) * score) + (b * float(evidence_score))
+    return max(0.0, min(1.0, float(score)))
+
+
 def adaptive_bridge_budget(
     base_budget: int,
     concept_count: int,

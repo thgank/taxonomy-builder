@@ -488,6 +488,8 @@ def _run_coverage_recovery(ctx: BuildContext, state: BuildState) -> None:
             concept_scores=ctx.concept_scores,
             min_orphan_doc_freq=1,
             min_orphan_score=0.15,
+            evidence_index=ctx.evidence_index if ctx.settings.evidence_linking_enabled else None,
+            evidence_top_k=ctx.settings.evidence_top_k,
         )
         accepted_recovery_orphans.extend(_accept_recovery_links(recovery_orphans))
         if accepted_recovery_orphans:
@@ -507,6 +509,8 @@ def _run_coverage_recovery(ctx: BuildContext, state: BuildState) -> None:
                 concept_scores=ctx.concept_scores,
                 min_orphan_doc_freq=1,
                 min_orphan_score=0.0,
+                evidence_index=ctx.evidence_index if ctx.settings.evidence_linking_enabled else None,
+                evidence_top_k=ctx.settings.evidence_top_k,
             )
             accepted_second = _accept_recovery_links(second_pass)
             if accepted_second:

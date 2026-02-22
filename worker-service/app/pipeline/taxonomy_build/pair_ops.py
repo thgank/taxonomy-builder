@@ -5,7 +5,9 @@ from collections import defaultdict
 
 from sqlalchemy.orm import Session
 
-from app.db import Concept, ConceptOccurrence, DocumentChunk
+from app.config import config
+from app.db import Concept, ConceptOccurrence, Document, DocumentChunk
+from app.pipeline.term_extraction_cleaning import compile_term_pattern
 from app.pipeline.taxonomy_build.edge_filters import parent_validity_score
 from app.pipeline.taxonomy_build.graph_metrics import edge_key
 
@@ -119,6 +121,49 @@ def compute_concept_doc_freq(session: Session, concepts: list[Concept]) -> dict[
     out: dict[str, int] = {}
     for c in concepts:
         out[c.canonical] = len(per_concept_docs.get(str(c.id), set()))
+
+    # Concept occurrences are capped per term; this can underestimate doc-freq
+    # and cause valid parents to be rejected. Recompute exact df for low-df terms.
+    collection_id = concepts[0].collection_id
+    refine_labels = [
+        c.canonical
+        for c in concepts
+        if out.get(c.canonical, 0) < int(max(1, config.min_parent_doc_freq))
+    ]
+    if not refine_labels:
+        return out
+
+    doc_ids = [
+        d[0]
+        for d in (
+            session.query(Document.id)
+            .filter(
+                Document.collection_id == collection_id,
+                Document.status == "PARSED",
+            )
+            .all()
+        )
+    ]
+    if not doc_ids:
+        return out
+
+    patterns = {label: compile_term_pattern(label) for label in refine_labels}
+    refined_docs: dict[str, set[str]] = {label: set() for label in refine_labels}
+    rows = (
+        session.query(DocumentChunk.document_id, DocumentChunk.text)
+        .filter(DocumentChunk.document_id.in_(doc_ids))
+        .yield_per(500)
+    )
+    for doc_id, chunk_text in rows:
+        text = chunk_text or ""
+        if not text:
+            continue
+        doc_key = str(doc_id)
+        for label, pattern in patterns.items():
+            if pattern.search(text):
+                refined_docs[label].add(doc_key)
+    for label, docs in refined_docs.items():
+        out[label] = max(out.get(label, 0), len(docs))
     return out
 
 

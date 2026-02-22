@@ -40,7 +40,9 @@ class Config:
 
     # Pipeline defaults
     chunk_size: int = int(os.getenv("CHUNK_SIZE", "1000"))
+    chunk_min_chars: int = int(os.getenv("CHUNK_MIN_CHARS", "80"))
     max_terms: int = int(os.getenv("MAX_TERMS", "500"))
+    max_occurrences_per_term: int = int(os.getenv("MAX_OCCURRENCES_PER_TERM", "80"))
     min_term_freq: int = int(os.getenv("MIN_TERM_FREQ", "2"))
     min_doc_freq: int = int(os.getenv("MIN_DOC_FREQ", "2"))
     min_term_quality_score: float = float(os.getenv("MIN_TERM_QUALITY_SCORE", "0.40"))
@@ -130,6 +132,42 @@ class Config:
     hearst_trigger_fallback_enabled: bool = (
         os.getenv("HEARST_TRIGGER_FALLBACK_ENABLED", "true").lower() == "true"
     )
+    adaptive_thresholds_enabled: bool = (
+        os.getenv("ADAPTIVE_THRESHOLDS_ENABLED", "true").lower() == "true"
+    )
+    threshold_profile_name: str = os.getenv("THRESHOLD_PROFILE_NAME", "default")
+    threshold_profile_global_fallback: bool = (
+        os.getenv("THRESHOLD_PROFILE_GLOBAL_FALLBACK", "true").lower() == "true"
+    )
+
+    # Edge ranker
+    edge_ranker_enabled: bool = os.getenv("EDGE_RANKER_ENABLED", "false").lower() == "true"
+    edge_ranker_model_path: str = os.getenv("EDGE_RANKER_MODEL_PATH", "./data/models/edge_ranker.joblib")
+    edge_ranker_blend_alpha: float = float(os.getenv("EDGE_RANKER_BLEND_ALPHA", "0.45"))
+    edge_ranker_min_confidence: float = float(os.getenv("EDGE_RANKER_MIN_CONFIDENCE", "0.40"))
+
+    # Retrieval-augmented evidence for linking
+    evidence_linking_enabled: bool = (
+        os.getenv("EVIDENCE_LINKING_ENABLED", "false").lower() == "true"
+    )
+    evidence_top_k: int = int(os.getenv("EVIDENCE_TOP_K", "5"))
+    evidence_window_chars: int = int(os.getenv("EVIDENCE_WINDOW_CHARS", "220"))
+    evidence_max_pairs_per_job: int = int(os.getenv("EVIDENCE_MAX_PAIRS_PER_JOB", "200"))
+
+    # Active-learning loop
+    active_learning_enabled: bool = (
+        os.getenv("ACTIVE_LEARNING_ENABLED", "true").lower() == "true"
+    )
+    active_learning_batch_size: int = int(os.getenv("ACTIVE_LEARNING_BATCH_SIZE", "200"))
+    active_learning_min_risk_score: float = float(
+        os.getenv("ACTIVE_LEARNING_MIN_RISK_SCORE", "0.35")
+    )
+    threshold_max_update_step: float = float(os.getenv("THRESHOLD_MAX_UPDATE_STEP", "0.03"))
+    threshold_min_label_samples: int = int(os.getenv("THRESHOLD_MIN_LABEL_SAMPLES", "50"))
+
+    # Multilingual quality gates
+    cross_lang_consistency_min: float = float(os.getenv("CROSS_LANG_CONSISTENCY_MIN", "0.80"))
+    per_lang_min_coverage: float = float(os.getenv("PER_LANG_MIN_COVERAGE", "0.45"))
 
     # Logging
     log_level: str = os.getenv("LOG_LEVEL", "INFO")

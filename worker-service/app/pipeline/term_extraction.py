@@ -49,7 +49,7 @@ def _load_chunks_by_lang(session: Session, collection_id: str) -> tuple[list[Doc
     chunks = (
         session.query(DocumentChunk)
         .filter(DocumentChunk.document_id.in_(doc_ids))
-        .order_by(DocumentChunk.chunk_index)
+        .order_by(DocumentChunk.document_id, DocumentChunk.chunk_index)
         .all()
     )
     chunks_by_lang: dict[str, list[DocumentChunk]] = defaultdict(list)
@@ -239,7 +239,15 @@ def handle_terms(session: Session, msg: dict) -> None:
 
         term_lang = concept.lang or dominant_lang
         lang_chunks = chunks_by_lang.get(term_lang[:2], chunks)
-        occs = find_occurrences(term, lang_chunks) or find_occurrences(term, chunks)
+        occs = find_occurrences(
+            term,
+            lang_chunks,
+            max_per_term=config.max_occurrences_per_term,
+        ) or find_occurrences(
+            term,
+            chunks,
+            max_per_term=config.max_occurrences_per_term,
+        )
         for occ in occs:
             occurrence = ConceptOccurrence(
                 id=uuid.uuid4(),
@@ -262,4 +270,3 @@ def handle_terms(session: Session, msg: dict) -> None:
     add_job_event(session, job_id, "INFO", f"Term extraction complete: {stored} concepts stored")
     update_job_status(session, job_id, "RUNNING", progress=100)
     log.info("Term extraction complete for collection %s: %d concepts", collection_id, stored)
-

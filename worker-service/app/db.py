@@ -147,6 +147,134 @@ class TaxonomyEdge(Base):
     child_concept = relationship("Concept", foreign_keys=[child_concept_id])
 
 
+# ── Taxonomy Edge Candidates ─────────────────────────────
+
+class TaxonomyEdgeCandidate(Base):
+    __tablename__ = "taxonomy_edge_candidates"
+    __table_args__ = (
+        Index("idx_edge_candidates_taxonomy", "taxonomy_version_id", "created_at"),
+        Index("idx_edge_candidates_collection", "collection_id", "created_at"),
+        Index("idx_edge_candidates_lang_method", "collection_id", "lang", "method", "decision"),
+        Index("idx_edge_candidates_risk", "collection_id", "risk_score"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    taxonomy_version_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("taxonomy_versions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    collection_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("collections.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    parent_concept_id = Column(UUID(as_uuid=True), ForeignKey("concepts.id", ondelete="SET NULL"))
+    child_concept_id = Column(UUID(as_uuid=True), ForeignKey("concepts.id", ondelete="SET NULL"))
+    parent_label = Column(Text, nullable=False)
+    child_label = Column(Text, nullable=False)
+    lang = Column(String(10))
+    method = Column(String(64), nullable=False, default="unknown")
+    stage = Column(String(32), nullable=False, default="build")
+    base_score = Column(Float, nullable=False, default=0.0)
+    ranker_score = Column(Float)
+    evidence_score = Column(Float)
+    final_score = Column(Float, nullable=False, default=0.0)
+    decision = Column(String(16), nullable=False, default="pending")
+    risk_score = Column(Float, nullable=False, default=0.0)
+    rejection_reason = Column(Text)
+    feature_vector = Column(JSONB, nullable=False, default=dict)
+    evidence = Column(JSONB, nullable=False, default=dict)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+
+
+# ── Taxonomy Edge Labels ─────────────────────────────────
+
+class TaxonomyEdgeLabel(Base):
+    __tablename__ = "taxonomy_edge_labels"
+    __table_args__ = (
+        Index("idx_edge_labels_taxonomy", "taxonomy_version_id", "created_at"),
+        Index("idx_edge_labels_collection", "collection_id", "created_at"),
+        Index("idx_edge_labels_source", "collection_id", "label_source", "label"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    candidate_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("taxonomy_edge_candidates.id", ondelete="SET NULL"),
+    )
+    taxonomy_version_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("taxonomy_versions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    collection_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("collections.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    parent_concept_id = Column(UUID(as_uuid=True), ForeignKey("concepts.id", ondelete="SET NULL"))
+    child_concept_id = Column(UUID(as_uuid=True), ForeignKey("concepts.id", ondelete="SET NULL"))
+    parent_label = Column(Text, nullable=False)
+    child_label = Column(Text, nullable=False)
+    label = Column(String(16), nullable=False)
+    label_source = Column(String(32), nullable=False, default="manual")
+    reviewer_id = Column(String(64))
+    reason = Column(Text)
+    meta = Column(JSONB, nullable=False, default=dict)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+
+
+# ── Threshold Profiles ───────────────────────────────────
+
+class TaxonomyThresholdProfile(Base):
+    __tablename__ = "taxonomy_threshold_profiles"
+    __table_args__ = (
+        Index("idx_threshold_profiles_collection", "collection_id", "created_at"),
+        Index("idx_threshold_profiles_active", "collection_id", "is_active"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    collection_id = Column(UUID(as_uuid=True), ForeignKey("collections.id", ondelete="CASCADE"))
+    name = Column(String(128), nullable=False)
+    is_active = Column(Boolean, nullable=False, default=False)
+    min_samples = Column(Integer, nullable=False, default=50)
+    profile = Column(JSONB, nullable=False, default=dict)
+    metrics = Column(JSONB, nullable=False, default=dict)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    updated_at = Column(DateTime(timezone=True), default=utcnow)
+
+
+# ── Taxonomy Releases ────────────────────────────────────
+
+class TaxonomyRelease(Base):
+    __tablename__ = "taxonomy_releases"
+    __table_args__ = (
+        Index("idx_taxonomy_releases_collection", "collection_id", "created_at"),
+        Index("idx_taxonomy_releases_channel_active", "collection_id", "channel", "is_active"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    collection_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("collections.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    taxonomy_version_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("taxonomy_versions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    release_name = Column(String(128), nullable=False)
+    channel = Column(String(16), nullable=False, default="active")
+    traffic_percent = Column(Integer, nullable=False, default=100)
+    is_active = Column(Boolean, nullable=False, default=True)
+    rollback_of = Column(UUID(as_uuid=True), ForeignKey("taxonomy_releases.id", ondelete="SET NULL"))
+    quality_snapshot = Column(JSONB, nullable=False, default=dict)
+    notes = Column(Text)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+
+
 # ── Jobs ─────────────────────────────────────────────────
 
 class Job(Base):

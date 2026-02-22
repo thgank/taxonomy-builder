@@ -1,10 +1,17 @@
 package com.taxonomy.api.service;
 
 import com.taxonomy.api.dto.request.CreateEdgeRequest;
+import com.taxonomy.api.dto.request.CreateEdgeLabelRequest;
+import com.taxonomy.api.dto.request.CreateReleaseRequest;
+import com.taxonomy.api.dto.request.PromoteReleaseRequest;
+import com.taxonomy.api.dto.request.RollbackReleaseRequest;
 import com.taxonomy.api.dto.request.UpdateEdgeRequest;
 import com.taxonomy.api.dto.response.*;
 import com.taxonomy.api.entity.Concept;
+import com.taxonomy.api.entity.TaxonomyEdgeCandidate;
 import com.taxonomy.api.entity.TaxonomyEdge;
+import com.taxonomy.api.entity.TaxonomyEdgeLabel;
+import com.taxonomy.api.entity.TaxonomyRelease;
 import com.taxonomy.api.entity.TaxonomyVersion;
 import com.taxonomy.api.exception.ResourceNotFoundException;
 import com.taxonomy.api.repository.*;
@@ -22,15 +29,24 @@ public class TaxonomyService {
 
     private final TaxonomyVersionRepository taxVersionRepo;
     private final TaxonomyEdgeRepository edgeRepo;
+    private final TaxonomyEdgeCandidateRepository edgeCandidateRepo;
+    private final TaxonomyEdgeLabelRepository edgeLabelRepo;
+    private final TaxonomyReleaseRepository releaseRepo;
     private final ConceptRepository conceptRepo;
     private final ConceptOccurrenceRepository occurrenceRepo;
 
     public TaxonomyService(TaxonomyVersionRepository taxVersionRepo,
                            TaxonomyEdgeRepository edgeRepo,
+                           TaxonomyEdgeCandidateRepository edgeCandidateRepo,
+                           TaxonomyEdgeLabelRepository edgeLabelRepo,
+                           TaxonomyReleaseRepository releaseRepo,
                            ConceptRepository conceptRepo,
                            ConceptOccurrenceRepository occurrenceRepo) {
         this.taxVersionRepo = taxVersionRepo;
         this.edgeRepo = edgeRepo;
+        this.edgeCandidateRepo = edgeCandidateRepo;
+        this.edgeLabelRepo = edgeLabelRepo;
+        this.releaseRepo = releaseRepo;
         this.conceptRepo = conceptRepo;
         this.occurrenceRepo = occurrenceRepo;
     }
@@ -173,6 +189,186 @@ public class TaxonomyService {
         return toEdgeResponse(edge);
     }
 
+    /* ── Edge Labels (active-learning) ─────────────────── */
+
+    @Transactional
+    public TaxonomyEdgeLabelResponse createEdgeLabel(UUID taxId, CreateEdgeLabelRequest req) {
+        var version = getVersionEntity(taxId);
+        UUID collectionId = version.getCollection().getId();
+
+        TaxonomyEdgeCandidate candidate = null;
+        if (req.candidateId() != null) {
+            candidate = edgeCandidateRepo.findById(req.candidateId())
+                    .orElseThrow(() -> new ResourceNotFoundException("TaxonomyEdgeCandidate", req.candidateId()));
+            if (!candidate.getTaxonomyVersion().getId().equals(taxId)) {
+                throw new IllegalArgumentException("Candidate does not belong to this taxonomy version");
+            }
+        }
+
+        var labelValue = (req.label() == null ? "" : req.label().trim().toLowerCase(Locale.ROOT));
+        if (!Set.of("accepted", "approved", "rejected").contains(labelValue)) {
+            throw new IllegalArgumentException("label must be one of: accepted, approved, rejected");
+        }
+        if ("approved".equals(labelValue)) {
+            labelValue = "accepted";
+        }
+
+        Concept parent = null;
+        Concept child = null;
+        if (req.parentConceptId() != null) {
+            parent = conceptRepo.findById(req.parentConceptId())
+                    .orElseThrow(() -> new ResourceNotFoundException("Concept", req.parentConceptId()));
+        }
+        if (req.childConceptId() != null) {
+            child = conceptRepo.findById(req.childConceptId())
+                    .orElseThrow(() -> new ResourceNotFoundException("Concept", req.childConceptId()));
+        }
+
+        var row = new TaxonomyEdgeLabel();
+        row.setCandidate(candidate);
+        row.setTaxonomyVersion(version);
+        row.setCollection(version.getCollection());
+        row.setParentConcept(parent != null ? parent : (candidate != null ? candidate.getParentConcept() : null));
+        row.setChildConcept(child != null ? child : (candidate != null ? candidate.getChildConcept() : null));
+        row.setParentLabel(
+                req.parentLabel() != null ? req.parentLabel()
+                        : (candidate != null ? candidate.getParentLabel() : "")
+        );
+        row.setChildLabel(
+                req.childLabel() != null ? req.childLabel()
+                        : (candidate != null ? candidate.getChildLabel() : "")
+        );
+        row.setLabel(labelValue);
+        row.setLabelSource(req.labelSource() != null ? req.labelSource() : "manual");
+        row.setReviewerId(req.reviewerId());
+        row.setReason(req.reason());
+        row.setMeta(req.meta() != null ? req.meta() : Map.of());
+        row = edgeLabelRepo.save(row);
+
+        // Keep candidate decision aligned with latest manual label.
+        if (candidate != null) {
+            candidate.setDecision("accepted".equals(labelValue) ? "accepted" : "rejected");
+            candidate.setRejectionReason("accepted".equals(labelValue) ? null : req.reason());
+            edgeCandidateRepo.save(candidate);
+        }
+        return toEdgeLabelResponse(row);
+    }
+
+    public Page<TaxonomyEdgeLabelResponse> getEdgeLabels(UUID taxId, Pageable pageable) {
+        getVersionEntity(taxId);
+        return edgeLabelRepo.findByTaxonomyVersionId(taxId, pageable).map(this::toEdgeLabelResponse);
+    }
+
+    /* ── Releases / Canary / Rollback ──────────────────── */
+
+    public List<TaxonomyReleaseResponse> listReleases(UUID collectionId) {
+        return releaseRepo.findByCollectionIdOrderByCreatedAtDesc(collectionId).stream()
+                .map(this::toReleaseResponse)
+                .toList();
+    }
+
+    @Transactional
+    public TaxonomyReleaseResponse createRelease(UUID collectionId, CreateReleaseRequest req) {
+        var version = getVersionEntity(req.taxonomyVersionId());
+        if (!version.getCollection().getId().equals(collectionId)) {
+            throw new IllegalArgumentException("taxonomyVersionId does not belong to this collection");
+        }
+        String channel = req.channel() != null ? req.channel().toLowerCase(Locale.ROOT) : "active";
+        if (!Set.of("active", "canary").contains(channel)) {
+            throw new IllegalArgumentException("channel must be active or canary");
+        }
+        int traffic = req.trafficPercent() != null ? req.trafficPercent() : ("canary".equals(channel) ? 10 : 100);
+        if (traffic < 1 || traffic > 100) {
+            throw new IllegalArgumentException("trafficPercent must be in [1,100]");
+        }
+        releaseRepo.findByCollectionIdAndChannelAndIsActiveTrue(collectionId, channel).ifPresent(existing -> {
+            existing.setIsActive(false);
+            releaseRepo.save(existing);
+        });
+
+        var release = new TaxonomyRelease();
+        release.setCollection(version.getCollection());
+        release.setTaxonomyVersion(version);
+        release.setReleaseName(req.releaseName() != null ? req.releaseName() : ("release-" + version.getId()));
+        release.setChannel(channel);
+        release.setTrafficPercent(traffic);
+        release.setIsActive(true);
+        release.setQualitySnapshot(version.getQualityMetrics() != null ? version.getQualityMetrics() : Map.of());
+        release.setNotes(req.notes());
+        release = releaseRepo.save(release);
+        return toReleaseResponse(release);
+    }
+
+    @Transactional
+    public TaxonomyReleaseResponse promoteRelease(UUID collectionId, UUID releaseId, PromoteReleaseRequest req) {
+        var release = releaseRepo.findById(releaseId)
+                .orElseThrow(() -> new ResourceNotFoundException("TaxonomyRelease", releaseId));
+        if (!release.getCollection().getId().equals(collectionId)) {
+            throw new IllegalArgumentException("Release does not belong to this collection");
+        }
+        String channel = req.channel() != null ? req.channel().toLowerCase(Locale.ROOT) : release.getChannel();
+        if (!Set.of("active", "canary").contains(channel)) {
+            throw new IllegalArgumentException("channel must be active or canary");
+        }
+        int traffic = req.trafficPercent() != null ? req.trafficPercent() : ("canary".equals(channel) ? 10 : 100);
+        if (traffic < 1 || traffic > 100) {
+            throw new IllegalArgumentException("trafficPercent must be in [1,100]");
+        }
+
+        releaseRepo.findByCollectionIdAndChannelAndIsActiveTrue(collectionId, channel).ifPresent(existing -> {
+            existing.setIsActive(false);
+            releaseRepo.save(existing);
+        });
+        release.setChannel(channel);
+        release.setTrafficPercent(traffic);
+        release.setIsActive(true);
+        if (req.notes() != null && !req.notes().isBlank()) {
+            release.setNotes(req.notes());
+        }
+        release = releaseRepo.save(release);
+        return toReleaseResponse(release);
+    }
+
+    @Transactional
+    public TaxonomyReleaseResponse rollbackRelease(UUID collectionId, UUID sourceReleaseId, RollbackReleaseRequest req) {
+        var source = releaseRepo.findById(sourceReleaseId)
+                .orElseThrow(() -> new ResourceNotFoundException("TaxonomyRelease", sourceReleaseId));
+        if (!source.getCollection().getId().equals(collectionId)) {
+            throw new IllegalArgumentException("Release does not belong to this collection");
+        }
+        UUID rollbackToId = req.rollbackToReleaseId();
+        if (rollbackToId == null) {
+            throw new IllegalArgumentException("rollbackToReleaseId is required");
+        }
+        var target = releaseRepo.findById(rollbackToId)
+                .orElseThrow(() -> new ResourceNotFoundException("TaxonomyRelease", rollbackToId));
+        if (!target.getCollection().getId().equals(collectionId)) {
+            throw new IllegalArgumentException("rollbackToReleaseId does not belong to this collection");
+        }
+
+        String channel = req.channel() != null ? req.channel().toLowerCase(Locale.ROOT) : "active";
+        if (!Set.of("active", "canary").contains(channel)) {
+            throw new IllegalArgumentException("channel must be active or canary");
+        }
+        releaseRepo.findByCollectionIdAndChannelAndIsActiveTrue(collectionId, channel).ifPresent(existing -> {
+            existing.setIsActive(false);
+            releaseRepo.save(existing);
+        });
+
+        var rollback = new TaxonomyRelease();
+        rollback.setCollection(target.getCollection());
+        rollback.setTaxonomyVersion(target.getTaxonomyVersion());
+        rollback.setReleaseName("rollback-to-" + target.getReleaseName());
+        rollback.setChannel(channel);
+        rollback.setTrafficPercent("canary".equals(channel) ? 10 : 100);
+        rollback.setIsActive(true);
+        rollback.setRollbackOf(source);
+        rollback.setQualitySnapshot(target.getQualitySnapshot() != null ? target.getQualitySnapshot() : Map.of());
+        rollback.setNotes(req.notes());
+        rollback = releaseRepo.save(rollback);
+        return toReleaseResponse(rollback);
+    }
+
     /* ── Concepts search & detail ────────────────────────── */
 
     public Page<ConceptResponse> searchConcepts(UUID taxId, String query, Pageable pageable) {
@@ -311,6 +507,41 @@ public class TaxonomyService {
                 e.getChildConcept().getId(),
                 e.getChildConcept().getCanonical(),
                 e.getRelation(), e.getScore(), e.getEvidence()
+        );
+    }
+
+    private TaxonomyEdgeLabelResponse toEdgeLabelResponse(TaxonomyEdgeLabel e) {
+        return new TaxonomyEdgeLabelResponse(
+                e.getId(),
+                e.getCandidate() != null ? e.getCandidate().getId() : null,
+                e.getTaxonomyVersion().getId(),
+                e.getCollection().getId(),
+                e.getParentConcept() != null ? e.getParentConcept().getId() : null,
+                e.getChildConcept() != null ? e.getChildConcept().getId() : null,
+                e.getParentLabel(),
+                e.getChildLabel(),
+                e.getLabel(),
+                e.getLabelSource(),
+                e.getReviewerId(),
+                e.getReason(),
+                e.getMeta(),
+                e.getCreatedAt()
+        );
+    }
+
+    private TaxonomyReleaseResponse toReleaseResponse(TaxonomyRelease r) {
+        return new TaxonomyReleaseResponse(
+                r.getId(),
+                r.getCollection().getId(),
+                r.getTaxonomyVersion().getId(),
+                r.getReleaseName(),
+                r.getChannel(),
+                r.getTrafficPercent(),
+                r.getIsActive(),
+                r.getRollbackOf() != null ? r.getRollbackOf().getId() : null,
+                r.getQualitySnapshot(),
+                r.getNotes(),
+                r.getCreatedAt()
         );
     }
 

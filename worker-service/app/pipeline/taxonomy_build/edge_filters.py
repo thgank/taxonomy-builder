@@ -157,11 +157,19 @@ def semantic_from_evidence(edge: dict) -> float:
     for item in ev:
         if not isinstance(item, dict):
             continue
-        sem = float(item.get("semantic_similarity", 0.0) or 0.0)
-        lex = float(item.get("lexical_similarity", 0.0) or 0.0)
-        sim = float(item.get("similarity", sem) or 0.0)
+        sem = max(
+            float(item.get("semantic_similarity", 0.0) or 0.0),
+            float(item.get("cosine_similarity", 0.0) or 0.0),
+            float(item.get("retrieval_evidence_score", 0.0) or 0.0),
+        )
         cooc = float(item.get("cooccurrence_support", 0.0) or 0.0)
-        best = max(best, (0.65 * sem) + (0.25 * lex) + (0.10 * cooc), (0.75 * sim) + (0.15 * lex) + (0.10 * cooc))
+        lex = float(item.get("lexical_similarity", 0.0) or 0.0)
+        # Do not treat plain "similarity" as semantic by default: for several methods
+        # it is lexical/mixed and causes false low-semantic rejections.
+        if sem <= 0.0:
+            continue
+        blended = (0.82 * sem) + (0.12 * lex) + (0.06 * cooc)
+        best = max(best, sem, blended)
     return best
 
 

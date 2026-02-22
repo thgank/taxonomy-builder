@@ -33,9 +33,11 @@ def find_occurrences(
             base -= 0.08
         return round(max(0.35, min(0.96, base)), 3)
 
-    occurrences = []
+    by_doc: dict[str, dict] = {}
+    overflow: list[dict] = []
     pattern = compile_term_pattern(term)
     for chunk in chunks:
+        doc_id = str(chunk.document_id)
         for match in pattern.finditer(chunk.text):
             s_start, s_end = sentence_bounds(chunk.text, match.start())
             start = max(0, min(match.start(), s_start))
@@ -43,16 +45,21 @@ def find_occurrences(
             snippet = re.sub(r"\s+", " ", chunk.text[start:end]).strip()
             if not snippet:
                 continue
-            occurrences.append(
-                {
-                    "chunk_id": str(chunk.id),
-                    "snippet": snippet,
-                    "start_offset": match.start(),
-                    "end_offset": match.end(),
-                    "confidence": occurrence_confidence(term, snippet),
-                }
-            )
-            if len(occurrences) >= max_per_term:
-                return occurrences
-    return occurrences
-
+            item = {
+                "chunk_id": str(chunk.id),
+                "snippet": snippet,
+                "start_offset": match.start(),
+                "end_offset": match.end(),
+                "confidence": occurrence_confidence(term, snippet),
+            }
+            # Keep first hit per document first, then fill remaining budget with extras.
+            if doc_id not in by_doc:
+                by_doc[doc_id] = item
+                if len(by_doc) >= max_per_term:
+                    return list(by_doc.values())[:max_per_term]
+            elif len(overflow) < max_per_term:
+                overflow.append(item)
+    out = list(by_doc.values())
+    if len(out) < max_per_term and overflow:
+        out.extend(overflow[: max_per_term - len(out)])
+    return out[:max_per_term]

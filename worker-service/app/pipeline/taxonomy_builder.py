@@ -18,6 +18,7 @@ from app.pipeline.taxonomy_build.build_generation import build_all_relation_cand
 from app.pipeline.taxonomy_build.build_persistence import (
     finalize_empty,
     finalize_success,
+    persist_edge_candidates,
     persist_taxonomy_edges,
 )
 from app.pipeline.taxonomy_build.build_recovery_quality import (
@@ -52,6 +53,15 @@ def handle_build(session: Session, msg: dict) -> None:
     state = build_initial_state(ctx, all_pairs)
     apply_connectivity_expansion(ctx, state)
     run_postprocess_and_recovery(ctx, state)
+    candidate_logs_stored = persist_edge_candidates(ctx, state.candidate_logs)
+    add_job_event(
+        ctx.session,
+        ctx.job_id,
+        "INFO",
+        f"Candidate edge logs persisted: {candidate_logs_stored}, "
+        f"threshold_profile={ctx.threshold_profile_id or 'none'}, "
+        f"ranker_enabled={str(state.ranker_enabled).lower()}",
+    )
 
     _, violations = evaluate_quality_gate_and_hubness(ctx, state)
     if violations:
