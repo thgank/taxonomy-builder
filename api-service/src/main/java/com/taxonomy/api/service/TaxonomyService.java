@@ -261,6 +261,7 @@ public class TaxonomyService {
         return new TaxonomyExportResponse(
                 taxId, version.getCollection().getId(),
                 version.getAlgorithm(), version.getParameters(),
+                version.getQualityMetrics(),
                 nodes, edgeDtos
         );
     }

@@ -167,6 +167,35 @@ def connectivity_critical_edge_keys(
     return critical
 
 
+def cap_protected_edge_keys_by_parent(
+    pairs: list[dict],
+    protected_edge_keys: set[tuple[str, str]],
+    concept_doc_freq: dict[str, int],
+    max_per_parent: int,
+) -> set[tuple[str, str]]:
+    if not protected_edge_keys:
+        return set()
+    if max_per_parent <= 0:
+        return set()
+
+    grouped: dict[str, list[dict]] = defaultdict(list)
+    for edge in pairs:
+        key = edge_key(edge)
+        if key in protected_edge_keys:
+            grouped[edge["hypernym"]].append(edge)
+
+    capped: set[tuple[str, str]] = set()
+    for parent_edges in grouped.values():
+        ranked = sorted(
+            parent_edges,
+            key=lambda e: edge_rank_score(e, concept_doc_freq),
+            reverse=True,
+        )
+        for edge in ranked[:max_per_parent]:
+            capped.add(edge_key(edge))
+    return capped
+
+
 def limit_parent_hubness(
     pairs: list[dict],
     concept_doc_freq: dict[str, int],
@@ -194,4 +223,3 @@ def limit_parent_hubness(
         keep_regular = regular[: max(0, hard_cap - len(protected))]
         capped.extend(protected + keep_regular)
     return capped
-

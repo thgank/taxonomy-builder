@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from collections import defaultdict
 
 from app.pipeline.taxonomy_build.edge_filters import parent_validity_score
 from app.pipeline.taxonomy_build.graph_metrics import components_with_nodes, edge_key
@@ -9,15 +10,20 @@ TOKEN_RE = re.compile(r"[^\W_]+", re.UNICODE)
 
 
 def component_representative(component: set[str], concept_doc_freq: dict[str, int]) -> str:
+    def _score(node: str) -> tuple[float, float, int, int, int]:
+        token_count = len(TOKEN_RE.findall(node))
+        return (
+            1.0 if token_count >= 2 else 0.0,
+            parent_validity_score(node, concept_doc_freq),
+            concept_doc_freq.get(node, 0),
+            -abs(token_count - 2),
+            -len(node),
+        )
+
     ranked = sorted(
         component,
-        key=lambda x: (
-            1 if len(TOKEN_RE.findall(x)) >= 2 else 0,
-            -parent_validity_score(x, concept_doc_freq),
-            -concept_doc_freq.get(x, 0),
-            len(TOKEN_RE.findall(x)),
-            len(x),
-        ),
+        key=_score,
+        reverse=True,
     )
     return ranked[0]
 
@@ -35,14 +41,19 @@ def fallback_connectivity_candidates(
         return []
     largest = max(comps, key=len)
     largest_set = set(largest)
+    out_degree: dict[str, int] = defaultdict(int)
+    for edge in edges:
+        out_degree[edge["hypernym"]] += 1
     largest_anchors = sorted(
         largest,
         key=lambda x: (
             1 if len(TOKEN_RE.findall(x)) >= 2 else 0,
-            -parent_validity_score(x, concept_doc_freq),
-            -concept_doc_freq.get(x, 0),
-            len(TOKEN_RE.findall(x)),
+            parent_validity_score(x, concept_doc_freq),
+            concept_doc_freq.get(x, 0),
+            -out_degree.get(x, 0),
+            -abs(len(TOKEN_RE.findall(x)) - 2),
         ),
+        reverse=True,
     )[: min(16, max(5, len(largest) // 3))]
     if not largest_anchors:
         return []
@@ -66,8 +77,9 @@ def fallback_connectivity_candidates(
             comp,
             key=lambda x: (
                 1 if len(TOKEN_RE.findall(x)) >= 2 else 0,
-                -parent_validity_score(x, concept_doc_freq),
-                -concept_doc_freq.get(x, 0),
+                parent_validity_score(x, concept_doc_freq),
+                concept_doc_freq.get(x, 0),
+                -out_degree.get(x, 0),
             ),
             reverse=True,
         )[: min(3, len(comp))]

@@ -152,6 +152,8 @@ def _run_component_bridging(ctx: BuildContext, state: BuildState) -> None:
                 0.62,
                 float(config.min_bridge_semantic_similarity) - (0.08 * (pass_idx - 1)),
             ),
+            max_new_children_per_parent=max(1, ctx.settings.bridge_max_new_children_per_parent),
+            parent_load_penalty_alpha=max(0.0, ctx.settings.bridge_parent_load_penalty_alpha),
         )
         rejected_reasons: Counter[str] = Counter()
         dropped_duplicate = 0
@@ -226,23 +228,50 @@ def _run_anchor_bridging(ctx: BuildContext, state: BuildState) -> None:
     )
     rejected_reasons: Counter[str] = Counter()
     dropped_duplicate = 0
+    dropped_parent_cap = 0
     existing_keys = {edge_key(e) for e in state.unique_pairs}
+    current_parent_degree: dict[str, int] = Counter(e["hypernym"] for e in state.unique_pairs)
+    local_parent_load: Counter[str] = Counter()
+    parent_cap = max(1, ctx.settings.bridge_max_new_children_per_parent)
+    parent_soft_cap = max(4, parent_cap + 2)
     accepted_links: list[dict] = []
     for e in anchor_links:
+        parent = e["hypernym"]
+        if local_parent_load[parent] >= parent_cap:
+            dropped_parent_cap += 1
+            continue
+        projected_parent_outdegree = current_parent_degree.get(parent, 0) + local_parent_load[parent]
+        load_penalty = max(0.0, ctx.settings.bridge_parent_load_penalty_alpha) * max(
+            0,
+            projected_parent_outdegree - parent_soft_cap,
+        )
+        adjusted_edge = dict(e)
+        adjusted_edge["score"] = round(max(0.0, float(e.get("score", 0.0)) - load_penalty), 4)
+        evidence = adjusted_edge.get("evidence", {})
+        if isinstance(evidence, dict):
+            evidence["parent_load_penalty"] = round(load_penalty, 4)
+            evidence["projected_parent_outdegree"] = projected_parent_outdegree
+            adjusted_edge["evidence"] = evidence
         min_score = connectivity_min_score(
-            e,
-            edge_min_score(e, state.min_edge_accept_score, state.method_thresholds),
+            adjusted_edge,
+            edge_min_score(adjusted_edge, state.min_edge_accept_score, state.method_thresholds),
             recovery_mode=recovery_mode,
         )
-        reason = edge_rejection_reason(e, ctx.concept_doc_freq, min_score, recovery_mode=recovery_mode)
+        reason = edge_rejection_reason(
+            adjusted_edge,
+            ctx.concept_doc_freq,
+            min_score,
+            recovery_mode=recovery_mode,
+        )
         if reason:
             rejected_reasons[reason] += 1
             continue
-        if edge_key(e) in existing_keys:
+        if edge_key(adjusted_edge) in existing_keys:
             dropped_duplicate += 1
             continue
-        accepted_links.append(e)
-        existing_keys.add(edge_key(e))
+        accepted_links.append(adjusted_edge)
+        existing_keys.add(edge_key(adjusted_edge))
+        local_parent_load[parent] += 1
 
     if accepted_links:
         state.connectivity_candidate_pool.extend(anchor_links)
@@ -257,5 +286,6 @@ def _run_anchor_bridging(ctx: BuildContext, state: BuildState) -> None:
         msg
         + f"(target_lcr={ctx.settings.target_largest_component_ratio:.2f}, budget={ctx.settings.anchor_bridge_max_links}, "
         + f"recovery_mode={str(recovery_mode).lower()}, duplicates={dropped_duplicate}, "
+        + f"parent_cap={dropped_parent_cap}, "
         + f"rejected={format_reason_counts(rejected_reasons)})",
     )

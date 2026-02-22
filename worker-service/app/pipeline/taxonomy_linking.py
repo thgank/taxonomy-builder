@@ -145,9 +145,13 @@ def bridge_components(
     parent_validator: Callable[[str], float] | None = None,
     min_lexical_similarity: float | None = None,
     min_semantic_similarity: float | None = None,
+    max_new_children_per_parent: int = 2,
+    parent_load_penalty_alpha: float = 0.06,
 ) -> list[dict]:
     if max_links <= 0:
         return []
+    max_new_children_per_parent = max(1, int(max_new_children_per_parent))
+    parent_load_penalty_alpha = max(0.0, float(parent_load_penalty_alpha))
     comps = _connected_components(edges, nodes=concept_labels or [])
     if len(comps) <= 1:
         return []
@@ -172,7 +176,14 @@ def bridge_components(
         # Representatives: strongest nodes in component (improves bridge recall).
         ranked = sorted(
             [n for n in comp if not is_low_quality_label(n)],
-            key=lambda n: (-out_degree.get(n, 0), len(tokenize(n)), len(n)),
+            key=lambda n: (
+                1 if len(tokenize(n)) >= 2 else 0,
+                parent_validator(n) if parent_validator else 0.5,
+                -out_degree.get(n, 0),
+                -abs(len(tokenize(n)) - 2),
+                -len(n),
+            ),
+            reverse=True,
         )
         if not ranked:
             continue
@@ -212,6 +223,8 @@ def bridge_components(
         for j in range(i + 1, len(reps)):
             a = reps[i]
             b = reps[j]
+            if comp_idx.get(a) == comp_idx.get(b):
+                continue
             lexical_sim = _label_similarity(a, b)
             semantic_sim = semantic_scores.get((a, b), 0.0)
             sim = max(lexical_sim, (0.35 * lexical_sim) + (0.65 * semantic_sim))
@@ -257,20 +270,40 @@ def bridge_components(
                     "touches_largest": (
                         comp_idx.get(a) == largest_comp_id or comp_idx.get(b) == largest_comp_id
                     ),
-                    "similarity": sim,
+                    "raw_similarity": sim,
                 },
             })
     candidate_links.sort(
         key=lambda e: (
             1 if e.get("_bridge_meta", {}).get("touches_largest") else 0,
             1 if e.get("_bridge_meta", {}).get("cross_component") else 0,
-            float(e.get("_bridge_meta", {}).get("similarity", 0.0)),
+            float(e.get("_bridge_meta", {}).get("raw_similarity", 0.0)),
         ),
         reverse=True,
     )
+    local_parent_load: dict[str, int] = defaultdict(int)
+    parent_soft_cap = max(4, max_new_children_per_parent + 2)
     for edge in candidate_links:
+        parent = edge["hypernym"]
+        if local_parent_load[parent] >= max_new_children_per_parent:
+            continue
+        projected_outdegree = out_degree.get(parent, 0) + local_parent_load[parent]
+        load_penalty = parent_load_penalty_alpha * max(0, projected_outdegree - parent_soft_cap)
+        raw_similarity = float(edge.get("_bridge_meta", {}).get("raw_similarity", edge.get("score", 0.0)))
+        adjusted_similarity = raw_similarity - load_penalty
+        if adjusted_similarity < threshold:
+            continue
+        edge["score"] = round(min(0.92, max(0.0, adjusted_similarity)), 4)
+        evidence = edge.get("evidence", {})
+        if isinstance(evidence, dict):
+            evidence["raw_similarity"] = round(raw_similarity, 4)
+            evidence["parent_load_penalty"] = round(load_penalty, 4)
+            evidence["projected_parent_outdegree"] = projected_outdegree
+            evidence["similarity"] = round(adjusted_similarity, 4)
+            edge["evidence"] = evidence
         edge.pop("_bridge_meta", None)
         links.append(edge)
+        local_parent_load[parent] += 1
         if len(links) >= max_links:
             break
     return links

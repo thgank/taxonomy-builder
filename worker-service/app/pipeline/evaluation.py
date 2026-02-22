@@ -312,6 +312,7 @@ def handle_evaluate(session: Session, msg: dict) -> None:
 
     # ── Compose quality report ───────────────────────────
     quality_metrics = {
+        "schema_version": 2,
         "structural": structural,
         "graph_connectivity": graph_connectivity,
         "edge_confidence": edge_stats,

@@ -21,6 +21,8 @@ class BuildSettings:
     component_bridging_enabled: bool
     component_bridge_threshold: float
     component_bridge_max_links: int
+    bridge_max_new_children_per_parent: int
+    bridge_parent_load_penalty_alpha: float
     min_parent_doc_freq: int
     adaptive_edge_accept_percentile: float
     target_largest_component_ratio: float
@@ -28,8 +30,14 @@ class BuildSettings:
     connectivity_repair_enabled: bool
     lcr_recovery_mode_enabled: bool
     lcr_recovery_margin: float
+    adaptive_target_lcr_enabled: bool
+    adaptive_target_lcr_value: float
+    adaptive_target_lcr_min_coverage: float
+    adaptive_target_lcr_min_components: int
+    adaptive_target_lcr_gap_trigger: float
     coverage_recovery_enabled: bool
     coverage_recovery_target: float
+    hubness_protected_max_per_parent: int
     anchor_bridge_max_links: int
     connectivity_repair_max_links: int
     coverage_recovery_max_links: int
@@ -81,6 +89,18 @@ def load_build_settings(params: dict, concept_count: int) -> BuildSettings:
         component_bridge_max_links=int(
             params.get("component_bridge_max_links", config.component_bridge_max_links)
         ),
+        bridge_max_new_children_per_parent=int(
+            params.get(
+                "bridge_max_new_children_per_parent",
+                config.bridge_max_new_children_per_parent,
+            )
+        ),
+        bridge_parent_load_penalty_alpha=float(
+            params.get(
+                "bridge_parent_load_penalty_alpha",
+                config.bridge_parent_load_penalty_alpha,
+            )
+        ),
         min_parent_doc_freq=int(params.get("min_parent_doc_freq", config.min_parent_doc_freq)),
         adaptive_edge_accept_percentile=float(params.get("adaptive_edge_accept_percentile", 25)),
         target_largest_component_ratio=float(
@@ -93,8 +113,38 @@ def load_build_settings(params: dict, concept_count: int) -> BuildSettings:
         connectivity_repair_enabled=bool(params.get("connectivity_repair_enabled", True)),
         lcr_recovery_mode_enabled=bool(params.get("lcr_recovery_mode_enabled", True)),
         lcr_recovery_margin=float(params.get("lcr_recovery_margin", 0.02)),
+        adaptive_target_lcr_enabled=bool(
+            params.get("adaptive_target_lcr_enabled", config.adaptive_target_lcr_enabled)
+        ),
+        adaptive_target_lcr_value=float(
+            params.get("adaptive_target_lcr_value", config.adaptive_target_lcr_value)
+        ),
+        adaptive_target_lcr_min_coverage=float(
+            params.get(
+                "adaptive_target_lcr_min_coverage",
+                config.adaptive_target_lcr_min_coverage,
+            )
+        ),
+        adaptive_target_lcr_min_components=int(
+            params.get(
+                "adaptive_target_lcr_min_components",
+                config.adaptive_target_lcr_min_components,
+            )
+        ),
+        adaptive_target_lcr_gap_trigger=float(
+            params.get(
+                "adaptive_target_lcr_gap_trigger",
+                config.adaptive_target_lcr_gap_trigger,
+            )
+        ),
         coverage_recovery_enabled=bool(params.get("coverage_recovery_enabled", True)),
         coverage_recovery_target=float(params.get("coverage_recovery_target", 0.64)),
+        hubness_protected_max_per_parent=int(
+            params.get(
+                "hubness_protected_max_per_parent",
+                config.hubness_protected_max_per_parent,
+            )
+        ),
         anchor_bridge_max_links=int(
             params.get("anchor_bridge_max_links", max(12, concept_count // 3))
         ),
@@ -106,4 +156,3 @@ def load_build_settings(params: dict, concept_count: int) -> BuildSettings:
         ),
         hearst_soft_mode=bool(params.get("hearst_soft_mode", True)),
     )
-

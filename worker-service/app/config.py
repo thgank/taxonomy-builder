@@ -70,6 +70,39 @@ class Config:
     min_bridge_lexical_similarity: float = float(
         os.getenv("MIN_BRIDGE_LEXICAL_SIMILARITY", "0.28")
     )
+    bridge_parent_load_penalty_alpha: float = float(
+        os.getenv("BRIDGE_PARENT_LOAD_PENALTY_ALPHA", "0.06")
+    )
+    bridge_max_new_children_per_parent: int = int(
+        os.getenv("BRIDGE_MAX_NEW_CHILDREN_PER_PARENT", "2")
+    )
+    hubness_protected_max_per_parent: int = int(
+        os.getenv("HUBNESS_PROTECTED_MAX_PER_PARENT", "2")
+    )
+    recovery_lexical_override_similarity: float = float(
+        os.getenv("RECOVERY_LEXICAL_OVERRIDE_SIMILARITY", "0.60")
+    )
+    recovery_lexical_override_lexical: float = float(
+        os.getenv("RECOVERY_LEXICAL_OVERRIDE_LEXICAL", "0.22")
+    )
+    recovery_lexical_override_min_score: float = float(
+        os.getenv("RECOVERY_LEXICAL_OVERRIDE_MIN_SCORE", "0.58")
+    )
+    adaptive_target_lcr_enabled: bool = (
+        os.getenv("ADAPTIVE_TARGET_LCR_ENABLED", "true").lower() == "true"
+    )
+    adaptive_target_lcr_value: float = float(
+        os.getenv("ADAPTIVE_TARGET_LCR_VALUE", "0.50")
+    )
+    adaptive_target_lcr_min_coverage: float = float(
+        os.getenv("ADAPTIVE_TARGET_LCR_MIN_COVERAGE", "0.60")
+    )
+    adaptive_target_lcr_min_components: int = int(
+        os.getenv("ADAPTIVE_TARGET_LCR_MIN_COMPONENTS", "6")
+    )
+    adaptive_target_lcr_gap_trigger: float = float(
+        os.getenv("ADAPTIVE_TARGET_LCR_GAP_TRIGGER", "0.02")
+    )
 
     # Logging
     log_level: str = os.getenv("LOG_LEVEL", "INFO")

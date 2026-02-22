@@ -18,12 +18,14 @@ from app.pipeline.taxonomy_build.edge_filters import (
 )
 from app.pipeline.taxonomy_build.edge_scoring import edge_min_score
 from app.pipeline.taxonomy_build.graph_metrics import (
+    components_with_nodes,
     coverage_from_pairs,
     dedupe_pairs,
     edge_key,
     largest_component_ratio_from_pairs,
 )
 from app.pipeline.taxonomy_build.pair_ops import (
+    cap_protected_edge_keys_by_parent,
     collapse_bidirectional_pairs,
     connectivity_critical_edge_keys,
     limit_parent_hubness,
@@ -34,6 +36,50 @@ from app.pipeline.taxonomy_quality import (
     evaluate_quality_gate,
 )
 from app.pipeline.taxonomy_text import is_low_quality_label
+
+
+def _max_parent_outdegree(pairs: list[dict]) -> int:
+    if not pairs:
+        return 0
+    counts: Counter[str] = Counter()
+    for edge in pairs:
+        counts[edge["hypernym"]] += 1
+    return max(counts.values(), default=0)
+
+
+def _effective_target_lcr(
+    ctx: BuildContext,
+    state: BuildState,
+    post_hub_lcr: float,
+) -> tuple[float, dict[str, float | int | bool]]:
+    base_target = float(ctx.settings.target_largest_component_ratio)
+    if not ctx.settings.adaptive_target_lcr_enabled:
+        return base_target, {
+            "adaptive_enabled": False,
+            "coverage": round(coverage_from_pairs(state.unique_pairs, ctx.concept_labels), 4),
+            "component_count": len(components_with_nodes(state.unique_pairs, ctx.concept_labels)),
+            "base_target": round(base_target, 4),
+            "effective_target": round(base_target, 4),
+        }
+
+    coverage_now = coverage_from_pairs(state.unique_pairs, ctx.concept_labels)
+    component_count = len(components_with_nodes(state.unique_pairs, ctx.concept_labels))
+    severe_fragmentation = (
+        component_count >= max(2, ctx.settings.adaptive_target_lcr_min_components)
+        and post_hub_lcr < (base_target + ctx.settings.adaptive_target_lcr_gap_trigger)
+    )
+    if coverage_now >= ctx.settings.adaptive_target_lcr_min_coverage and severe_fragmentation:
+        effective = max(base_target, float(ctx.settings.adaptive_target_lcr_value))
+    else:
+        effective = base_target
+    return effective, {
+        "adaptive_enabled": True,
+        "coverage": round(coverage_now, 4),
+        "component_count": component_count,
+        "base_target": round(base_target, 4),
+        "effective_target": round(effective, 4),
+        "severe_fragmentation": severe_fragmentation,
+    }
 
 
 def run_postprocess_and_recovery(ctx: BuildContext, state: BuildState) -> None:
@@ -70,12 +116,25 @@ def _run_connectivity_repair(
 ) -> None:
     if not ctx.settings.connectivity_repair_enabled:
         return
-    if post_hub_lcr >= ctx.settings.target_largest_component_ratio:
+
+    effective_target_lcr, target_info = _effective_target_lcr(ctx, state, post_hub_lcr)
+    if post_hub_lcr >= effective_target_lcr:
         return
 
     recovery_mode = (
         ctx.settings.lcr_recovery_mode_enabled
-        and post_hub_lcr < (ctx.settings.target_largest_component_ratio - ctx.settings.lcr_recovery_margin)
+        and post_hub_lcr < (effective_target_lcr - ctx.settings.lcr_recovery_margin)
+    )
+    add_job_event(
+        ctx.session,
+        ctx.job_id,
+        "INFO",
+        "Connectivity repair target: "
+        f"base={target_info['base_target']:.3f}, "
+        f"effective={target_info['effective_target']:.3f}, "
+        f"coverage={target_info['coverage']:.3f}, "
+        f"components={target_info['component_count']}, "
+        f"adaptive={str(target_info['adaptive_enabled']).lower()}",
     )
     fallback_repair_candidates = fallback_connectivity_candidates(
         state.unique_pairs,
@@ -113,7 +172,7 @@ def _run_connectivity_repair(
         candidate_pairs=state.connectivity_candidate_pool + pre_prune_pairs,
         concept_labels=ctx.concept_labels,
         concept_doc_freq=ctx.concept_doc_freq,
-        target_lcr=ctx.settings.target_largest_component_ratio,
+        target_lcr=effective_target_lcr,
         max_additional_edges=ctx.settings.connectivity_repair_max_links,
         recovery_mode=recovery_mode,
     )
@@ -142,7 +201,7 @@ def _run_connectivity_repair(
             ctx.job_id,
             "INFO",
             f"Connectivity repair added {len(repaired)} edges; "
-            f"post_repair_lcr={post_repair_lcr:.3f} (target={ctx.settings.target_largest_component_ratio:.3f})",
+            f"post_repair_lcr={post_repair_lcr:.3f} (target={effective_target_lcr:.3f})",
         )
 
 
@@ -236,11 +295,18 @@ def evaluate_quality_gate_and_hubness(ctx: BuildContext, state: BuildState) -> t
 
     if pre_hubness_quality["hubness"] > ctx.settings.quality_thresholds["max_hubness"]:
         hub_cap = int(max(2, round(ctx.settings.quality_thresholds["max_hubness"])))
-        protected_for_hubness = connectivity_critical_edge_keys(
+        protected_for_hubness_raw = connectivity_critical_edge_keys(
             state.unique_pairs,
             ctx.concept_labels,
             ctx.concept_doc_freq,
         )
+        protected_for_hubness = cap_protected_edge_keys_by_parent(
+            state.unique_pairs,
+            protected_for_hubness_raw,
+            ctx.concept_doc_freq,
+            max_per_parent=max(1, ctx.settings.hubness_protected_max_per_parent),
+        )
+        max_out_before = _max_parent_outdegree(state.unique_pairs)
         state.unique_pairs, removed_hub_edges, reattached_hub_edges = trim_hub_edges(
             state.unique_pairs,
             ctx.concept_doc_freq,
@@ -249,12 +315,15 @@ def evaluate_quality_gate_and_hubness(ctx: BuildContext, state: BuildState) -> t
         )
         state.unique_pairs = collapse_bidirectional_pairs(state.unique_pairs, ctx.concept_doc_freq)
         post_hubness_quality = compute_graph_quality(state.unique_pairs, quality_total)
+        max_out_after = _max_parent_outdegree(state.unique_pairs)
         add_job_event(
             ctx.session,
             ctx.job_id,
             "INFO",
             f"Hubness rebalance removed {removed_hub_edges} edges, reattached {reattached_hub_edges} "
-            f"(hubness {pre_hubness_quality['hubness']:.3f} -> {post_hubness_quality['hubness']:.3f})",
+            f"(hubness {pre_hubness_quality['hubness']:.3f} -> {post_hubness_quality['hubness']:.3f}, "
+            f"max_outdegree {max_out_before} -> {max_out_after}, "
+            f"protected_edges {len(protected_for_hubness_raw)} -> {len(protected_for_hubness)})",
         )
 
     quality_report = compute_graph_quality(state.unique_pairs, quality_total)

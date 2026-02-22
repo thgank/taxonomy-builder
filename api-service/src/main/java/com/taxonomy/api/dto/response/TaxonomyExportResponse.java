@@ -9,6 +9,7 @@ public record TaxonomyExportResponse(
         UUID collectionId,
         String algorithm,
         Map<String, Object> parameters,
+        Map<String, Object> qualityMetrics,
         List<ExportNode> nodes,
         List<ExportEdge> edges
 ) {

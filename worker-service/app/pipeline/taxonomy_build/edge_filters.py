@@ -193,6 +193,9 @@ def edge_rejection_reason(
         return "low_quality_label"
     pt = TOKEN_RE.findall(parent.lower())
     ct = TOKEN_RE.findall(child.lower())
+    recovery_sim_floor = float(config.recovery_lexical_override_similarity)
+    recovery_lex_floor = float(config.recovery_lexical_override_lexical)
+    recovery_score_floor = float(config.recovery_lexical_override_min_score)
     if len(pt) == 1 and len(ct) == 1:
         method = edge_method(edge)
         semantic = semantic_from_evidence(edge)
@@ -201,10 +204,15 @@ def edge_rejection_reason(
         lex = evidence_max_value(edge, "lexical_similarity")
         recovery_single_ok = (
             recovery_mode
-            and method in {"component_bridge", "component_anchor_bridge", "connectivity_repair_fallback"}
-            and sim >= 0.60
-            and lex >= 0.22
-            and score >= 0.58
+            and method in {
+                "component_bridge",
+                "component_anchor_bridge",
+                "connectivity_repair_fallback",
+                "orphan_safe_link",
+            }
+            and sim >= recovery_sim_floor
+            and lex >= recovery_lex_floor
+            and score >= recovery_score_floor
         )
         if not (
             (method in {"component_bridge", "component_anchor_bridge"} and score >= 0.72 and semantic >= 0.60)
@@ -217,19 +225,51 @@ def edge_rejection_reason(
     if float(edge.get("score", 0.0)) < min_score:
         return "score_below_threshold"
     semantic = semantic_from_evidence(edge)
-    if semantic > 0 and semantic < 0.55:
+    if semantic > 0:
         method = edge_method(edge)
         sim = evidence_max_value(edge, "similarity")
         lex = evidence_max_value(edge, "lexical_similarity")
+        token_lex = 0.0
+        if pt and ct:
+            token_lex = len(set(pt) & set(ct)) / max(1, len(set(pt) | set(ct)))
+        effective_lex = max(lex, token_lex)
+        parent_validity = parent_validity_score(parent, concept_doc_freq)
+        semantic_floor = 0.55
+        if recovery_mode and method in {
+            "component_bridge",
+            "component_anchor_bridge",
+            "connectivity_repair_fallback",
+            "orphan_safe_link",
+        }:
+            semantic_floor -= 0.08 * max(0.0, parent_validity - 0.5)
+            semantic_floor -= 0.10 * max(0.0, sim - 0.5)
+            semantic_floor -= 0.06 * max(0.0, effective_lex - 0.2)
+            semantic_floor = max(0.42, semantic_floor)
+    else:
+        semantic_floor = 0.0
+        method = edge_method(edge)
+        sim = evidence_max_value(edge, "similarity")
+        token_lex = 0.0
+        if pt and ct:
+            token_lex = len(set(pt) & set(ct)) / max(1, len(set(pt) | set(ct)))
+        effective_lex = max(evidence_max_value(edge, "lexical_similarity"), token_lex)
+
+    if semantic > 0 and semantic < semantic_floor:
         if method in {"component_bridge", "component_anchor_bridge"} and float(edge.get("score", 0.0)) >= 0.68:
             return None
         if method == "component_anchor_bridge" and sim >= 0.58 and lex >= 0.18:
             return None
         if (
             recovery_mode
-            and method in {"component_bridge", "component_anchor_bridge", "connectivity_repair_fallback"}
-            and sim >= 0.56
-            and lex >= 0.14
+            and method in {
+                "component_bridge",
+                "component_anchor_bridge",
+                "connectivity_repair_fallback",
+                "orphan_safe_link",
+            }
+            and sim >= recovery_sim_floor
+            and effective_lex >= recovery_lex_floor
+            and float(edge.get("score", 0.0)) >= recovery_score_floor
         ):
             return None
         return "low_semantic_evidence"
@@ -253,4 +293,3 @@ def format_reason_counts(counts: Counter[str], max_items: int = 5) -> str:
     if not counts:
         return "none"
     return ", ".join(f"{k}={v}" for k, v in counts.most_common(max_items))
-

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from collections import defaultdict
 
 from app.pipeline.taxonomy_build.connectivity_candidates import component_representative
 from app.pipeline.taxonomy_build.edge_filters import parent_validity_score
@@ -22,13 +23,17 @@ def fallback_semantic_connectivity_candidates(
         return []
     largest = max(comps, key=len)
     largest_set = set(largest)
+    out_degree: dict[str, int] = defaultdict(int)
+    for edge in edges:
+        out_degree[edge["hypernym"]] += 1
     largest_candidates = sorted(
         largest,
         key=lambda x: (
             1 if len(TOKEN_RE.findall(x)) >= 2 else 0,
-            -parent_validity_score(x, concept_doc_freq),
-            -concept_doc_freq.get(x, 0),
-            len(TOKEN_RE.findall(x)),
+            parent_validity_score(x, concept_doc_freq),
+            concept_doc_freq.get(x, 0),
+            -out_degree.get(x, 0),
+            -abs(len(TOKEN_RE.findall(x)) - 2),
         ),
         reverse=True,
     )[: min(30, max(10, len(largest) // 2))]
@@ -41,8 +46,9 @@ def fallback_semantic_connectivity_candidates(
             comp,
             key=lambda x: (
                 1 if len(TOKEN_RE.findall(x)) >= 2 else 0,
-                -parent_validity_score(x, concept_doc_freq),
-                -concept_doc_freq.get(x, 0),
+                parent_validity_score(x, concept_doc_freq),
+                concept_doc_freq.get(x, 0),
+                -out_degree.get(x, 0),
             ),
             reverse=True,
         )
@@ -82,7 +88,8 @@ def fallback_semantic_connectivity_candidates(
             sem = semantic_scores.get((rep, anchor), 0.0)
             anc_t = set(TOKEN_RE.findall(anchor.lower()))
             lex = (len(rep_t & anc_t) / max(1, len(rep_t | anc_t))) if rep_t and anc_t else 0.0
-            combined = (0.82 * sem) + (0.18 * lex)
+            hub_penalty = 0.03 * max(0, out_degree.get(anchor, 0) - 4)
+            combined = (0.82 * sem) + (0.18 * lex) - hub_penalty
             if combined > best_combined:
                 best_anchor = anchor
                 best_combined = combined
@@ -141,15 +148,19 @@ def anchor_connect_components(
     largest = max(comps, key=len)
     if (len(largest) / total) >= target_lcr:
         return []
+    out_degree: dict[str, int] = defaultdict(int)
+    for edge in edges:
+        out_degree[edge["hypernym"]] += 1
 
     reps = [component_representative(c, concept_doc_freq) for c in comps if c is not largest]
     base_anchors = sorted(
         largest,
         key=lambda x: (
             1 if len(TOKEN_RE.findall(x)) >= 2 else 0,
-            -parent_validity_score(x, concept_doc_freq),
-            -concept_doc_freq.get(x, 0),
-            len(TOKEN_RE.findall(x)),
+            parent_validity_score(x, concept_doc_freq),
+            concept_doc_freq.get(x, 0),
+            -out_degree.get(x, 0),
+            -abs(len(TOKEN_RE.findall(x)) - 2),
         ),
         reverse=True,
     )[: min(20, max(8, len(largest) // 2))]
@@ -197,7 +208,8 @@ def anchor_connect_components(
             rep_t = set(TOKEN_RE.findall(rep.lower()))
             anc_t = set(TOKEN_RE.findall(anchor.lower()))
             lex = (len(rep_t & anc_t) / max(1, len(rep_t | anc_t))) if rep_t and anc_t else 0.0
-            score = (0.7 * sem) + (0.3 * lex)
+            hub_penalty = 0.04 * max(0, out_degree.get(anchor, 0) - 4)
+            score = (0.7 * sem) + (0.3 * lex) - hub_penalty
             if score > best_score:
                 best_score = score
                 best = anchor
