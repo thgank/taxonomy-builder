@@ -6,7 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "test": "tsc -p tsconfig.test.json && node --test .test-dist/src/shared/lib/format.test.js .test-dist/src/shared/lib/pagination.test.js .test-dist/src/shared/lib/pipeline.test.js",
+    "test": "tsc -p tsconfig.test.json && node --test .test-dist/src/shared/lib/format.test.js .test-dist/src/shared/lib/pagination.test.js .test-dist/src/shared/lib/pipeline.test.js .test-dist/src/shared/lib/records.test.js",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "format": "prettier --write .",
