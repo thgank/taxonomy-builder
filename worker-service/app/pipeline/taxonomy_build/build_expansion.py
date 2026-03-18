@@ -36,7 +36,9 @@ def _accept_new_edges(
     recovery_mode: bool = False,
 ) -> list[dict]:
     accepted: list[dict] = []
+    soft_reject_reasons = {"score_below_threshold", "low_semantic_evidence", "single_to_single"}
     existing_keys = {edge_key(e) for e in current_pairs}
+    deferred_keys = {edge_key(e) for e in state.connectivity_candidate_pool}
     parent_degree: dict[str, int] = Counter(e["hypernym"] for e in current_pairs)
     cooc_support = compute_pair_cooccurrence(ctx.chunks, ctx.concept_labels)
     for e in new_pairs:
@@ -81,6 +83,10 @@ def _accept_new_edges(
             e["evidence"] = ev
         reason = edge_rejection_reason(e, ctx.concept_doc_freq, min_score, recovery_mode=recovery_mode)
         if reason:
+            if ctx.settings.global_selector_enabled and reason in soft_reject_reasons:
+                if key not in deferred_keys:
+                    state.connectivity_candidate_pool.append(e)
+                    deferred_keys.add(key)
             state.candidate_logs.append(
                 build_candidate_log(
                     ctx,

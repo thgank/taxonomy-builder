@@ -6,6 +6,8 @@ API_KEY="${API_KEY:-dev-api-key-change-me}"
 POLL_INTERVAL_SEC="${POLL_INTERVAL_SEC:-2}"
 POLL_MAX_ATTEMPTS="${POLL_MAX_ATTEMPTS:-240}"
 BASELINE_TAXONOMY_ID="${BASELINE_TAXONOMY_ID:-}"
+SAVE_REPORT="${SAVE_REPORT:-false}"
+REPORT_DIR="${REPORT_DIR:-}"
 
 COLLECTION_NAME="${COLLECTION_NAME:-quality-regression-$(date +%Y%m%d-%H%M%S)}"
 
@@ -17,9 +19,61 @@ DEFAULT_FILES=(
   "data/uploads/174016a9-2a7a-4ab4-9bfd-9273aa1aa247/e7c593a9-79ad-4d6c-b1f4-8edfa60fcab0/10_energy_storage.txt"
 )
 
-if [ "$#" -gt 0 ]; then
-  FILES=("$@")
-else
+usage() {
+  cat <<'EOF'
+Usage:
+  ./scripts/run_quality_regression.sh [--save-report] [--report-dir <path>] [file1 file2 ...]
+
+Options:
+  --save-report        Save detailed run artifacts + generated relations files
+  --report-dir <path>  Output directory for saved report (default: reports/quality_runs/<collection_name>)
+  -h, --help           Show this help
+
+Env alternatives:
+  SAVE_REPORT=true
+  REPORT_DIR=reports/quality_runs/my_run
+EOF
+}
+
+FILES=()
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --save-report)
+      SAVE_REPORT=true
+      shift
+      ;;
+    --report-dir)
+      if [ "$#" -lt 2 ]; then
+        echo "--report-dir requires a path" >&2
+        exit 1
+      fi
+      REPORT_DIR="$2"
+      shift 2
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --)
+      shift
+      while [ "$#" -gt 0 ]; do
+        FILES+=("$1")
+        shift
+      done
+      ;;
+    -*)
+      echo "Unknown option: $1" >&2
+      usage
+      exit 1
+      ;;
+    *)
+      FILES+=("$1")
+      shift
+      ;;
+  esac
+done
+
+if [ "${#FILES[@]}" -eq 0 ]; then
   FILES=("${DEFAULT_FILES[@]}")
 fi
 
@@ -86,6 +140,8 @@ for i in $(seq 1 "$POLL_MAX_ATTEMPTS"); do
     break
   fi
 done
+
+printf '%s\n' "$job_json" > /tmp/taxonomy_job_current.json
 
 if [ "$final_status" != "SUCCESS" ]; then
   echo "Job ended with status: $final_status" >&2
@@ -186,8 +242,133 @@ for k in (
 PY
 fi
 
+save_report_lc="$(printf '%s' "$SAVE_REPORT" | tr '[:upper:]' '[:lower:]')"
+if [ "$save_report_lc" = "true" ]; then
+  if [ -z "$REPORT_DIR" ]; then
+    REPORT_DIR="reports/quality_runs/$COLLECTION_NAME"
+  fi
+  export REPORT_DIR
+  mkdir -p "$REPORT_DIR"
+  cp /tmp/taxonomy_upload_resp.json "$REPORT_DIR/taxonomy_upload_resp.json"
+  cp /tmp/taxonomy_job_current.json "$REPORT_DIR/taxonomy_job_current.json"
+  cp /tmp/taxonomy_job_events.json "$REPORT_DIR/taxonomy_job_events.json"
+  cp /tmp/taxonomy_export_current.json "$REPORT_DIR/taxonomy_export_current.json"
+  cp /tmp/taxonomy_version_current.json "$REPORT_DIR/taxonomy_version_current.json"
+  if [ -f /tmp/taxonomy_version_baseline.json ]; then
+    cp /tmp/taxonomy_version_baseline.json "$REPORT_DIR/taxonomy_version_baseline.json"
+  fi
+
+  python3 - <<'PY'
+import csv
+import json
+import os
+from pathlib import Path
+
+report_dir = Path(os.environ["REPORT_DIR"])
+version_path = report_dir / "taxonomy_version_current.json"
+export_path = report_dir / "taxonomy_export_current.json"
+events_path = report_dir / "taxonomy_job_events.json"
+version = json.loads(version_path.read_text())
+export = json.loads(export_path.read_text())
+events = json.loads(events_path.read_text())
+quality = (version.get("qualityMetrics") or {})
+structural = quality.get("structural") or {}
+risk = quality.get("risk") or {}
+connectivity = quality.get("graph_connectivity") or {}
+summary = {
+    "collection_id": export.get("collectionId"),
+    "taxonomy_version_id": export.get("taxonomyVersionId"),
+    "quality_score_10": quality.get("quality_score_10"),
+    "coverage": structural.get("coverage"),
+    "coverage_candidate_set": structural.get("coverage_candidate_set"),
+    "largest_component_ratio": (connectivity.get("all_concepts") or {}).get("largest_component_ratio"),
+    "component_count": risk.get("component_count"),
+    "fragmentation_index": risk.get("fragmentation_index"),
+    "low_score_edge_ratio": risk.get("low_score_edge_ratio"),
+    "low_score_edge_count": risk.get("low_score_edge_count"),
+    "edge_count": version.get("edgeCount"),
+    "event_count": len(events),
+}
+(report_dir / "processing_summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2))
+
+nodes = export.get("nodes") or []
+node_label = {str(n.get("id")): str(n.get("label", "")) for n in nodes}
+edges = export.get("edges") or []
+edge_rows = []
+for edge in edges:
+    parent = node_label.get(str(edge.get("parent")), str(edge.get("parent")))
+    child = node_label.get(str(edge.get("child")), str(edge.get("child")))
+    score = float(edge.get("score", 0.0) or 0.0)
+    evidence = edge.get("evidence") or {}
+    if isinstance(evidence, list):
+        evidence = evidence[0] if evidence and isinstance(evidence[0], dict) else {}
+    if not isinstance(evidence, dict):
+        evidence = {}
+    method = str(evidence.get("method", "unknown"))
+    sem = float(evidence.get("semantic_similarity", 0.0) or 0.0)
+    lex = float(evidence.get("lexical_similarity", 0.0) or 0.0)
+    cooc = float(evidence.get("cooccurrence_support", 0.0) or 0.0)
+    snippets = evidence.get("retrieval_snippets") or []
+    snippet = ""
+    if snippets and isinstance(snippets, list) and isinstance(snippets[0], dict):
+        snippet = str(snippets[0].get("snippet", "")).replace("\n", " ").strip()
+    edge_rows.append({
+        "parent": parent,
+        "child": child,
+        "score": round(score, 4),
+        "method": method,
+        "semantic_similarity": round(sem, 4),
+        "lexical_similarity": round(lex, 4),
+        "cooccurrence_support": round(cooc, 4),
+        "snippet": snippet[:500],
+    })
+
+edge_rows.sort(key=lambda x: x["score"], reverse=True)
+
+with (report_dir / "relations.tsv").open("w", encoding="utf-8", newline="") as f:
+    w = csv.DictWriter(
+        f,
+        fieldnames=[
+            "parent",
+            "child",
+            "score",
+            "method",
+            "semantic_similarity",
+            "lexical_similarity",
+            "cooccurrence_support",
+            "snippet",
+        ],
+        delimiter="\t",
+    )
+    w.writeheader()
+    w.writerows(edge_rows)
+
+lines = []
+lines.append("# Built Relations")
+lines.append("")
+lines.append(f"- taxonomy_version_id: `{export.get('taxonomyVersionId')}`")
+lines.append(f"- collection_id: `{export.get('collectionId')}`")
+lines.append(f"- total_edges: **{len(edge_rows)}**")
+lines.append("")
+for i, row in enumerate(edge_rows, start=1):
+    lines.append(
+        f"{i}. `{row['parent']}` -> `{row['child']}` "
+        f"(score={row['score']:.4f}, method={row['method']})"
+    )
+    if row["snippet"]:
+        lines.append(f"   snippet: {row['snippet']}")
+
+(report_dir / "relations.md").write_text("\n".join(lines), encoding="utf-8")
+PY
+  echo "Saved detailed report: $REPORT_DIR"
+  echo "  - $REPORT_DIR/processing_summary.json"
+  echo "  - $REPORT_DIR/relations.md"
+  echo "  - $REPORT_DIR/relations.tsv"
+fi
+
 echo "Artifacts:"
 echo "  /tmp/taxonomy_upload_resp.json"
+echo "  /tmp/taxonomy_job_current.json"
 echo "  /tmp/taxonomy_job_events.json"
 echo "  /tmp/taxonomy_export_current.json"
 echo "  /tmp/taxonomy_version_current.json"

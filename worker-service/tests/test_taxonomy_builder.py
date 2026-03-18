@@ -1,22 +1,19 @@
 """
 Unit tests for taxonomy builder — Hearst patterns, cycle removal.
 """
-from app.pipeline.taxonomy_builder import (
-    _split_enumeration,
-    remove_cycles,
-    limit_depth,
-)
+from app.pipeline.taxonomy_quality import limit_depth, remove_cycles
+from app.pipeline.taxonomy_text import split_enumeration
 
 
 class TestSplitEnumeration:
     def test_comma_and(self):
-        result = _split_enumeration("cats, dogs, and fish")
+        result = split_enumeration("cats, dogs and fish")
         assert "cats" in result
         assert "dogs" in result
         assert "fish" in result
 
     def test_simple(self):
-        result = _split_enumeration("alpha")
+        result = split_enumeration("alpha")
         assert result == ["alpha"]
 
 

@@ -40,3 +40,4 @@ class BuildState:
     method_thresholds: dict[str, float]
     candidate_logs: list[dict]
     ranker_enabled: bool
+    selector_stats: dict | None = None

@@ -13,6 +13,7 @@ from app.job_helper import (
     update_taxonomy_status,
 )
 from app.pipeline.taxonomy_build.build_context import load_build_context
+from app.pipeline.taxonomy_build.edge_selector import apply_global_edge_selector
 from app.pipeline.taxonomy_build.build_expansion import apply_connectivity_expansion
 from app.pipeline.taxonomy_build.build_generation import build_all_relation_candidates, build_initial_state
 from app.pipeline.taxonomy_build.build_persistence import (
@@ -53,6 +54,27 @@ def handle_build(session: Session, msg: dict) -> None:
     state = build_initial_state(ctx, all_pairs)
     apply_connectivity_expansion(ctx, state)
     run_postprocess_and_recovery(ctx, state)
+    if ctx.settings.global_selector_enabled:
+        try:
+            selector_stats = apply_global_edge_selector(ctx, state)
+            state.selector_stats = selector_stats
+            add_job_event(
+                ctx.session,
+                ctx.job_id,
+                "INFO",
+                "Global selector: "
+                + f"pool={selector_stats.get('pool_size', 0)}, "
+                + f"selected={selector_stats.get('selected', len(state.unique_pairs))}, "
+                + f"lcr={selector_stats.get('final_lcr', 'n/a')}, "
+                + f"fallback={str(bool(selector_stats.get('fallback', False))).lower()}",
+            )
+        except Exception as exc:
+            add_job_event(
+                ctx.session,
+                ctx.job_id,
+                "WARN",
+                f"Global selector failed, fallback to pre-selector graph: {exc}",
+            )
     candidate_logs_stored = persist_edge_candidates(ctx, state.candidate_logs)
     add_job_event(
         ctx.session,

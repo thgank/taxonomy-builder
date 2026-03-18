@@ -1,11 +1,9 @@
 """
 Unit tests for term extraction — normalization, TF-IDF, TextRank.
 """
-from app.pipeline.term_extraction import (
-    normalize_term,
-    extract_ngrams,
-    deduplicate_terms,
-)
+from app.pipeline.term_extraction_cleaning import normalize_term
+from app.pipeline.term_extraction_methods import extract_ngrams
+from app.pipeline.term_extraction_scoring import deduplicate_terms
 
 
 class TestNormalize:

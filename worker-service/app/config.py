@@ -169,6 +169,20 @@ class Config:
     cross_lang_consistency_min: float = float(os.getenv("CROSS_LANG_CONSISTENCY_MIN", "0.80"))
     per_lang_min_coverage: float = float(os.getenv("PER_LANG_MIN_COVERAGE", "0.45"))
 
+    # Global edge selector (Phase 2 architecture)
+    global_selector_enabled: bool = (
+        os.getenv("GLOBAL_SELECTOR_ENABLED", "true").lower() == "true"
+    )
+    selector_include_rejected_candidates: bool = (
+        os.getenv("SELECTOR_INCLUDE_REJECTED_CANDIDATES", "true").lower() == "true"
+    )
+    selector_score_floor: float = float(os.getenv("SELECTOR_SCORE_FLOOR", "0.58"))
+    selector_min_bridge_score: float = float(os.getenv("SELECTOR_MIN_BRIDGE_SCORE", "0.54"))
+    selector_parent_cap: int = int(os.getenv("SELECTOR_PARENT_CAP", "6"))
+    selector_connectivity_bonus: float = float(os.getenv("SELECTOR_CONNECTIVITY_BONUS", "0.16"))
+    selector_orphan_bonus: float = float(os.getenv("SELECTOR_ORPHAN_BONUS", "0.08"))
+    selector_max_edges_factor: float = float(os.getenv("SELECTOR_MAX_EDGES_FACTOR", "0.90"))
+
     # Logging
     log_level: str = os.getenv("LOG_LEVEL", "INFO")
 

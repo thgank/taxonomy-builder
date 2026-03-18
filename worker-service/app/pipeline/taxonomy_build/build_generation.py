@@ -271,8 +271,10 @@ def build_initial_state(ctx: BuildContext, all_pairs: list[dict]) -> BuildState:
         parent_degree[edge["hypernym"]] = parent_degree.get(edge["hypernym"], 0) + 1
 
     accepted_pairs: list[dict] = []
+    deferred_pairs: list[dict] = []
     candidate_logs: list[dict] = []
     rejected = 0
+    soft_reject_reasons = {"score_below_threshold", "low_semantic_evidence", "single_to_single"}
     for edge in unique_pairs:
         method = edge_method(edge)
         features = extract_edge_features(ctx, edge, cooc_support, parent_degree)
@@ -340,6 +342,8 @@ def build_initial_state(ctx: BuildContext, all_pairs: list[dict]) -> BuildState:
             )
         else:
             rejected += 1
+            if ctx.settings.global_selector_enabled and reason in soft_reject_reasons:
+                deferred_pairs.append(edge)
             candidate_logs.append(
                 build_candidate_log(
                     ctx,
@@ -365,7 +369,7 @@ def build_initial_state(ctx: BuildContext, all_pairs: list[dict]) -> BuildState:
 
     return BuildState(
         unique_pairs=unique_pairs,
-        connectivity_candidate_pool=[],
+        connectivity_candidate_pool=deferred_pairs,
         min_edge_accept_score=min_edge_accept_score,
         method_thresholds=method_thresholds,
         candidate_logs=candidate_logs,

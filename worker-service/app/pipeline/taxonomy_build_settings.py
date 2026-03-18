@@ -67,6 +67,14 @@ class BuildSettings:
     active_learning_min_risk_score: float
     per_lang_min_coverage: float
     cross_lang_consistency_min: float
+    global_selector_enabled: bool
+    selector_include_rejected_candidates: bool
+    selector_score_floor: float
+    selector_min_bridge_score: float
+    selector_parent_cap: int
+    selector_connectivity_bonus: float
+    selector_orphan_bonus: float
+    selector_max_edges_factor: float
 
 
 def load_build_settings(params: dict, concept_count: int) -> BuildSettings:
@@ -272,5 +280,32 @@ def load_build_settings(params: dict, concept_count: int) -> BuildSettings:
         ),
         cross_lang_consistency_min=float(
             params.get("cross_lang_consistency_min", config.cross_lang_consistency_min)
+        ),
+        global_selector_enabled=bool(
+            params.get("global_selector_enabled", config.global_selector_enabled)
+        ),
+        selector_include_rejected_candidates=bool(
+            params.get(
+                "selector_include_rejected_candidates",
+                config.selector_include_rejected_candidates,
+            )
+        ),
+        selector_score_floor=float(
+            params.get("selector_score_floor", config.selector_score_floor)
+        ),
+        selector_min_bridge_score=float(
+            params.get("selector_min_bridge_score", config.selector_min_bridge_score)
+        ),
+        selector_parent_cap=int(
+            params.get("selector_parent_cap", config.selector_parent_cap)
+        ),
+        selector_connectivity_bonus=float(
+            params.get("selector_connectivity_bonus", config.selector_connectivity_bonus)
+        ),
+        selector_orphan_bonus=float(
+            params.get("selector_orphan_bonus", config.selector_orphan_bonus)
+        ),
+        selector_max_edges_factor=float(
+            params.get("selector_max_edges_factor", config.selector_max_edges_factor)
         ),
     )

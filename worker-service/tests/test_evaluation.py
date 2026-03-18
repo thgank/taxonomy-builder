@@ -16,6 +16,7 @@ def _make_concept(concept_id=None, collection_id=None):
     c.collection_id = collection_id or uuid.uuid4()
     c.canonical = f"concept_{c.id}"
     c.score = 0.5
+    c.lang = "en"
     return c
 
 

@@ -3,6 +3,7 @@ package com.taxonomy.api.service;
 import com.taxonomy.api.dto.request.CreateJobRequest;
 import com.taxonomy.api.entity.Collection;
 import com.taxonomy.api.entity.enums.JobStatus;
+import com.taxonomy.api.entity.enums.JobType;
 import com.taxonomy.api.exception.ConflictException;
 import com.taxonomy.api.messaging.JobPublisher;
 import com.taxonomy.api.repository.JobEventRepository;
@@ -15,6 +16,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -118,5 +120,25 @@ class JobServiceTest {
         assertEquals("IMPORT", response.type());
         assertEquals("QUEUED", response.status());
         verify(publisher).publish(eq("import"), any());
+    }
+
+    @Test
+    void cancel_releasesActiveJobLock() {
+        UUID jobId = UUID.randomUUID();
+        var collection = new Collection("Test", "desc");
+        var job = new com.taxonomy.api.entity.Job();
+        job.setId(jobId);
+        job.setCollection(collection);
+        job.setType(JobType.FULL_PIPELINE);
+        job.setStatus(JobStatus.RUNNING);
+        collection.setActiveJob(job);
+
+        when(jobRepo.findById(jobId)).thenReturn(Optional.of(job));
+
+        var response = jobService.cancel(jobId);
+
+        assertEquals("CANCELLED", response.status());
+        assertNull(collection.getActiveJob());
+        verify(jobRepo).save(job);
     }
 }
