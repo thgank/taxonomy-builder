@@ -34,7 +34,7 @@ jobs:
           cache: maven
 
       - name: Run Maven tests
-        run: ./mvnw test
+        run: mvn -B test
 
   worker-service:
     name: Worker Service
