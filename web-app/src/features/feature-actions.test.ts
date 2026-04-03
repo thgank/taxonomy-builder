@@ -16,16 +16,16 @@ test("createCollectionAction validates input, succeeds, and handles API errors",
     createCollection: async () => ({ id: "unused" }),
   });
 
-  let module = importFresh<typeof import("./create-collection/actions/create-collection-action")>(target);
-  const invalid = await module.createCollectionAction({ name: "   ", description: "desc" });
+  let importedActions = importFresh<typeof import("./create-collection/actions/create-collection-action")>(target);
+  const invalid = await importedActions.createCollectionAction({ name: "   ", description: "desc" });
   assert.equal(invalid.success, false);
   assert.equal(invalid.message, "Please correct the highlighted fields.");
 
   mockModule("@/entities/collection/api/create-collection", {
     createCollection: async () => ({ id: "col-1" }),
   });
-  module = importFresh<typeof import("./create-collection/actions/create-collection-action")>(target);
-  const success = await module.createCollectionAction({ name: "Energy", description: "" });
+  importedActions = importFresh<typeof import("./create-collection/actions/create-collection-action")>(target);
+  const success = await importedActions.createCollectionAction({ name: "Energy", description: "" });
   assert.deepEqual(success, { success: true, collectionId: "col-1" });
   assert.deepEqual(nextCache.__getCalls(), ["/collections"]);
 
@@ -35,8 +35,8 @@ test("createCollectionAction validates input, succeeds, and handles API errors",
       throw new ApiError("Collection exists", 409);
     },
   });
-  module = importFresh<typeof import("./create-collection/actions/create-collection-action")>(target);
-  const apiError = await module.createCollectionAction({ name: "Energy", description: "" });
+  importedActions = importFresh<typeof import("./create-collection/actions/create-collection-action")>(target);
+  const apiError = await importedActions.createCollectionAction({ name: "Energy", description: "" });
   assert.equal(apiError.success, false);
   assert.equal(apiError.message, "Collection exists");
 
@@ -53,8 +53,8 @@ test("createJobAction validates input, parses params, and returns failures", asy
     createJob: async () => ({ id: "unused" }),
   });
 
-  let module = importFresh<typeof import("./create-job/actions/create-job-action")>(target);
-  const invalid = await module.createJobAction("col-1", {
+  let importedActions = importFresh<typeof import("./create-job/actions/create-job-action")>(target);
+  const invalid = await importedActions.createJobAction("col-1", {
     type: "IMPORT",
     paramsText: "{bad",
   });
@@ -71,8 +71,8 @@ test("createJobAction validates input, parses params, and returns failures", asy
       return { id: "job-1" };
     },
   });
-  module = importFresh<typeof import("./create-job/actions/create-job-action")>(target);
-  const success = await module.createJobAction("col-1", {
+  importedActions = importFresh<typeof import("./create-job/actions/create-job-action")>(target);
+  const success = await importedActions.createJobAction("col-1", {
     type: "FULL_PIPELINE",
     paramsText: '{"chunk_size":100}',
   });
@@ -85,8 +85,8 @@ test("createJobAction validates input, parses params, and returns failures", asy
       throw new Error("boom");
     },
   });
-  module = importFresh<typeof import("./create-job/actions/create-job-action")>(target);
-  const genericError = await module.createJobAction("col-1", {
+  importedActions = importFresh<typeof import("./create-job/actions/create-job-action")>(target);
+  const genericError = await importedActions.createJobAction("col-1", {
     type: "IMPORT",
     paramsText: "",
   });
@@ -126,8 +126,8 @@ test("uploadDocumentsAction validates files, succeeds, and reports upload errors
     uploadCollectionDocuments: async () => [],
   });
 
-  let module = importFresh<typeof import("./upload-documents/actions/upload-documents-action")>(target);
-  const emptyResult = await module.uploadDocumentsAction("col-1", { status: "idle" }, new FormData());
+  let importedActions = importFresh<typeof import("./upload-documents/actions/upload-documents-action")>(target);
+  const emptyResult = await importedActions.uploadDocumentsAction("col-1", { status: "idle" }, new FormData());
   assert.deepEqual(emptyResult, {
     status: "error",
     message: "Select at least one file before uploading.",
@@ -139,11 +139,11 @@ test("uploadDocumentsAction validates files, succeeds, and reports upload errors
       return [{ id: "doc-1" }, { id: "doc-2" }];
     },
   });
-  module = importFresh<typeof import("./upload-documents/actions/upload-documents-action")>(target);
+  importedActions = importFresh<typeof import("./upload-documents/actions/upload-documents-action")>(target);
   const formData = new FormData();
   formData.append("files", new File(["a"], "a.txt"));
   formData.append("files", new File(["b"], "b.txt"));
-  const success = await module.uploadDocumentsAction("col-1", { status: "idle" }, formData);
+  const success = await importedActions.uploadDocumentsAction("col-1", { status: "idle" }, formData);
   assert.deepEqual(success, {
     status: "success",
     message: "Uploaded 2 documents.",
@@ -156,10 +156,10 @@ test("uploadDocumentsAction validates files, succeeds, and reports upload errors
       throw new Error("upload failed");
     },
   });
-  module = importFresh<typeof import("./upload-documents/actions/upload-documents-action")>(target);
+  importedActions = importFresh<typeof import("./upload-documents/actions/upload-documents-action")>(target);
   const failingData = new FormData();
   failingData.append("files", new File(["a"], "a.txt"));
-  const errorResult = await module.uploadDocumentsAction("col-1", { status: "idle" }, failingData);
+  const errorResult = await importedActions.uploadDocumentsAction("col-1", { status: "idle" }, failingData);
   assert.deepEqual(errorResult, {
     status: "error",
     message: "upload failed",

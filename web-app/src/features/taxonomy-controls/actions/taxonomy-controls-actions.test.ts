@@ -55,7 +55,7 @@ test("taxonomy control actions call APIs and revalidate taxonomy page", async ()
     },
   });
 
-  const module = importFresh<typeof import("./taxonomy-controls-actions")>(
+  const importedActions = importFresh<typeof import("./taxonomy-controls-actions")>(
     "@/features/taxonomy-controls/actions/taxonomy-controls-actions",
   );
 
@@ -64,7 +64,7 @@ test("taxonomy control actions call APIs and revalidate taxonomy page", async ()
   createEdgeData.set("childConceptId", "child-1");
   createEdgeData.set("relation", "is_a");
   createEdgeData.set("score", "0.75");
-  const edgeResult = await module.createTaxonomyEdgeAction("tax-1", { status: "idle" }, createEdgeData);
+  const edgeResult = await importedActions.createTaxonomyEdgeAction("tax-1", { status: "idle" }, createEdgeData);
 
   const labelData = new FormData();
   labelData.set("candidateId", "cand-1");
@@ -74,13 +74,13 @@ test("taxonomy control actions call APIs and revalidate taxonomy page", async ()
   labelData.set("labelSource", "manual");
   labelData.set("reviewerId", "qa");
   labelData.set("reason", "verified");
-  const labelResult = await module.createTaxonomyLabelAction("tax-1", { status: "idle" }, labelData);
+  const labelResult = await importedActions.createTaxonomyLabelAction("tax-1", { status: "idle" }, labelData);
 
   const updateData = new FormData();
   updateData.set("score", "0.8");
   updateData.set("approved", "on");
-  await module.updateTaxonomyEdgeAction("tax-1", "edge-1", updateData);
-  await module.deleteTaxonomyEdgeAction("tax-1", "edge-1");
+  await importedActions.updateTaxonomyEdgeAction("tax-1", "edge-1", updateData);
+  await importedActions.deleteTaxonomyEdgeAction("tax-1", "edge-1");
 
   assert.deepEqual(edgeResult, { status: "success", message: "Edge created." });
   assert.deepEqual(labelResult, { status: "success", message: "Label created." });
@@ -118,12 +118,12 @@ test("taxonomy control actions convert thrown errors into action state", async (
     deleteTaxonomyEdge: async () => undefined,
   });
 
-  const module = importFresh<typeof import("./taxonomy-controls-actions")>(
+  const importedActions = importFresh<typeof import("./taxonomy-controls-actions")>(
     "@/features/taxonomy-controls/actions/taxonomy-controls-actions",
   );
 
-  const edgeResult = await module.createTaxonomyEdgeAction("tax-1", { status: "idle" }, new FormData());
-  const labelResult = await module.createTaxonomyLabelAction("tax-1", { status: "idle" }, new FormData());
+  const edgeResult = await importedActions.createTaxonomyEdgeAction("tax-1", { status: "idle" }, new FormData());
+  const labelResult = await importedActions.createTaxonomyLabelAction("tax-1", { status: "idle" }, new FormData());
 
   assert.deepEqual(edgeResult, { status: "error", message: "edge failed" });
   assert.deepEqual(labelResult, { status: "error", message: "label failed" });

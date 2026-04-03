@@ -45,7 +45,7 @@ test("release actions create, promote, and rollback releases", async () => {
     },
   });
 
-  const module = importFresh<typeof import("./release-actions")>(
+  const importedActions = importFresh<typeof import("./release-actions")>(
     "@/features/release-management/actions/release-actions",
   );
 
@@ -55,19 +55,19 @@ test("release actions create, promote, and rollback releases", async () => {
   createData.set("channel", "canary");
   createData.set("trafficPercent", "15");
   createData.set("notes", "qa");
-  const createResult = await module.createReleaseAction("col-1", { status: "idle" }, createData);
+  const createResult = await importedActions.createReleaseAction("col-1", { status: "idle" }, createData);
 
   const promoteData = new FormData();
   promoteData.set("channel", "active");
   promoteData.set("trafficPercent", "100");
   promoteData.set("notes", "ship it");
-  await module.promoteReleaseAction("col-1", "rel-1", promoteData);
+  await importedActions.promoteReleaseAction("col-1", "rel-1", promoteData);
 
   const rollbackData = new FormData();
   rollbackData.set("rollbackToReleaseId", "rel-0");
   rollbackData.set("channel", "canary");
   rollbackData.set("notes", "rollback");
-  await module.rollbackReleaseAction("col-1", "rel-1", rollbackData);
+  await importedActions.rollbackReleaseAction("col-1", "rel-1", rollbackData);
 
   assert.deepEqual(createResult, { status: "success", message: "Release created." });
   assert.deepEqual(nextCache.__getCalls(), ["/collections/col-1", "/collections/col-1", "/collections/col-1"]);
