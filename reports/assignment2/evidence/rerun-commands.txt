@@ -1,0 +1,4 @@
+./mvnw -q test
+python3 -m pytest --cov=app --cov-report=xml:reports/coverage.xml --cov-report=term --cov-fail-under=70 --junitxml=reports/pytest.xml
+npm test
+npm run test:coverage

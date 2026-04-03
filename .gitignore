@@ -41,3 +41,10 @@ Thumbs.db
 
 # Docker overrides
 docker-compose.override.yml
+
+# Assignment 2 generated documentation artifacts
+scripts/generate_assignment2_report.py
+reports/assignment2/*.docx
+reports/assignment2/*.html
+reports/assignment2/*.xml
+worker-service/reports/*.xml

@@ -1,0 +1,95 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.13.3, pytest-9.0.2, pluggy-1.6.0
+rootdir: /Users/tslnkk/Desktop/projects/taxonomy/worker-service
+plugins: anyio-4.12.1, cov-7.0.0
+collected 153 items
+
+tests/test_connectivity_candidates.py ...                                [  1%]
+tests/test_consumer.py ...............                                   [ 11%]
+tests/test_consumer_extended.py .....                                    [ 15%]
+tests/test_evaluation.py .........                                       [ 20%]
+tests/test_evaluation_extended.py .....                                  [ 24%]
+tests/test_ingestion.py .......                                          [ 28%]
+tests/test_ingestion_extended.py .....                                   [ 32%]
+tests/test_job_helper.py ...                                             [ 33%]
+tests/test_main_and_health.py ..                                         [ 35%]
+tests/test_nlp.py ......                                                 [ 39%]
+tests/test_pair_ops_extended.py ....                                     [ 41%]
+tests/test_taxonomy_build_context.py ...                                 [ 43%]
+tests/test_taxonomy_build_edge_filters.py ....                           [ 46%]
+tests/test_taxonomy_build_edge_scoring.py ....                           [ 49%]
+tests/test_taxonomy_build_expansion.py ....                              [ 51%]
+tests/test_taxonomy_build_generation_extended.py .....                   [ 54%]
+tests/test_taxonomy_build_graph_metrics.py ...                           [ 56%]
+tests/test_taxonomy_build_persistence.py ...                             [ 58%]
+tests/test_taxonomy_builder.py ......                                    [ 62%]
+tests/test_taxonomy_builder_orchestration.py ....                        [ 65%]
+tests/test_taxonomy_embedding_extended.py ...                            [ 67%]
+tests/test_taxonomy_linking_extended.py ....                             [ 69%]
+tests/test_taxonomy_quality.py ...                                       [ 71%]
+tests/test_taxonomy_text.py .......                                      [ 76%]
+tests/test_taxonomy_text_extended.py ...                                 [ 78%]
+tests/test_term_extraction.py .........                                  [ 84%]
+tests/test_term_extraction_cleaning.py .....                             [ 87%]
+tests/test_term_extraction_methods_extended.py ...                       [ 89%]
+tests/test_term_extraction_occurrence.py ..                              [ 90%]
+tests/test_term_extraction_orchestration.py .....                        [ 94%]
+tests/test_term_extraction_scoring.py ....                               [ 96%]
+tests/test_term_extraction_scoring_extended.py ...                       [ 98%]
+tests/test_term_extraction_spacy.py ..                                   [100%]
+
+- generated xml file: /Users/tslnkk/Desktop/projects/taxonomy/worker-service/reports/pytest.xml -
+================================ tests coverage ================================
+_______________ coverage: platform darwin, python 3.13.3-final-0 _______________
+
+Name                                                     Stmts   Miss  Cover
+----------------------------------------------------------------------------
+app/__init__.py                                              0      0   100%
+app/config.py                                               96      0   100%
+app/consumer.py                                            137     47    66%
+app/db.py                                                  193      3    98%
+app/health.py                                                6      0   100%
+app/job_helper.py                                           43      7    84%
+app/logger.py                                               23      1    96%
+app/main.py                                                 22      1    95%
+app/pipeline/__init__.py                                     0      0   100%
+app/pipeline/evaluation.py                                 289     67    77%
+app/pipeline/ingestion.py                                  158      8    95%
+app/pipeline/nlp.py                                        105     18    83%
+app/pipeline/taxonomy_build/__init__.py                      0      0   100%
+app/pipeline/taxonomy_build/build_context.py                70     13    81%
+app/pipeline/taxonomy_build/build_expansion.py             132      9    93%
+app/pipeline/taxonomy_build/build_generation.py            197     14    93%
+app/pipeline/taxonomy_build/build_persistence.py            62      5    92%
+app/pipeline/taxonomy_build/build_recovery_quality.py      290    266     8%
+app/pipeline/taxonomy_build/build_types.py                  36      0   100%
+app/pipeline/taxonomy_build/connectivity.py                  5      0   100%
+app/pipeline/taxonomy_build/connectivity_candidates.py      74     11    85%
+app/pipeline/taxonomy_build/connectivity_repair.py         213    202     5%
+app/pipeline/taxonomy_build/connectivity_semantic.py       166    157     5%
+app/pipeline/taxonomy_build/edge_filters.py                161     50    69%
+app/pipeline/taxonomy_build/edge_scoring.py                 72      7    90%
+app/pipeline/taxonomy_build/edge_selector.py               263    246     6%
+app/pipeline/taxonomy_build/graph_metrics.py                63      5    92%
+app/pipeline/taxonomy_build/pair_ops.py                    198     32    84%
+app/pipeline/taxonomy_build_settings.py                     76      2    97%
+app/pipeline/taxonomy_builder.py                            50      3    94%
+app/pipeline/taxonomy_embedding.py                         203     41    80%
+app/pipeline/taxonomy_linking.py                           264     32    88%
+app/pipeline/taxonomy_quality.py                           103      7    93%
+app/pipeline/taxonomy_text.py                              304     86    72%
+app/pipeline/term_extraction.py                            142     12    92%
+app/pipeline/term_extraction_cleaning.py                   123     30    76%
+app/pipeline/term_extraction_constants.py                   18      0   100%
+app/pipeline/term_extraction_methods.py                    120     11    91%
+app/pipeline/term_extraction_occurrence.py                  49      3    94%
+app/pipeline/term_extraction_scoring.py                    159     11    93%
+app/pipeline/term_extraction_spacy.py                       15      0   100%
+----------------------------------------------------------------------------
+TOTAL                                                     4700   1407    70%
+Coverage XML written to file reports/coverage.xml
+Required test coverage of 70% reached. Total coverage: 70.06%
+============================= 153 passed in 1.65s ==============================
+real 5.57
+user 1.23
+sys 0.20

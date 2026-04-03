@@ -1,27 +1,16 @@
-import http from "k6/http";
 import { check, sleep } from "k6";
+import { envInt, envFloat, get, post, safeJson } from "./common.js";
 
 export const options = {
-  vus: 1,
-  iterations: 1,
+  vus: envInt("VUS", 1),
+  iterations: envInt("ITERATIONS", 1),
   thresholds: {
-    http_req_failed: ["rate<0.05"],
-    http_req_duration: ["p(95)<1500"],
+    http_req_failed: [`rate<${envFloat("MAX_FAILED_RATE", 0.05)}`],
+    http_req_duration: [`p(95)<${envInt("P95_MS", 1500)}`],
   },
 };
 
-const baseUrl = __ENV.BASE_URL || "http://localhost:8080";
-const apiKey = __ENV.API_KEY || "dev-api-key-change-me";
 const runJob = (__ENV.RUN_JOB || "false").toLowerCase() === "true";
-
-function headers(contentType = "application/json") {
-  return {
-    headers: {
-      "Content-Type": contentType,
-      "X-API-Key": apiKey,
-    },
-  };
-}
 
 export default function () {
   const collectionName = `qa-smoke-${Date.now()}`;
@@ -30,45 +19,29 @@ export default function () {
     description: "Created by k6 smoke test",
   });
 
-  const createCollectionRes = http.post(
-    `${baseUrl}/api/collections`,
-    createCollectionPayload,
-    headers(),
-  );
+  const createCollectionRes = post("/api/collections", createCollectionPayload);
 
   check(createCollectionRes, {
     "create collection status is 201": (r) => r.status === 201,
-    "create collection returns id": (r) => {
-      try {
-        return Boolean(r.json("id"));
-      } catch (_) {
-        return false;
-      }
-    },
+    "create collection returns id": (r) => Boolean(safeJson(r, "id")),
   });
 
-  const collectionId = createCollectionRes.json("id");
+  const collectionId = safeJson(createCollectionRes, "id");
   if (!collectionId) {
     return;
   }
 
-  const listCollectionsRes = http.get(
-    `${baseUrl}/api/collections`,
-    { headers: { "X-API-Key": apiKey } },
-  );
+  const listCollectionsRes = get("/api/collections");
 
   check(listCollectionsRes, {
     "list collections status is 200": (r) => r.status === 200,
   });
 
-  const getCollectionRes = http.get(
-    `${baseUrl}/api/collections/${collectionId}`,
-    { headers: { "X-API-Key": apiKey } },
-  );
+  const getCollectionRes = get(`/api/collections/${collectionId}`);
 
   check(getCollectionRes, {
     "get collection status is 200": (r) => r.status === 200,
-    "get collection name matches": (r) => r.json("name") === collectionName,
+    "get collection name matches": (r) => safeJson(r, "name") === collectionName,
   });
 
   if (runJob) {
@@ -84,23 +57,13 @@ export default function () {
       },
     });
 
-    const createJobRes = http.post(
-      `${baseUrl}/api/collections/${collectionId}/jobs`,
-      createJobPayload,
-      headers(),
-    );
+    const createJobRes = post(`/api/collections/${collectionId}/jobs`, createJobPayload);
 
     check(createJobRes, {
       "create job returns accepted object": (r) => r.status === 201,
-      "create job returns job id": (r) => {
-        try {
-          return Boolean(r.json("id"));
-        } catch (_) {
-          return false;
-        }
-      },
+      "create job returns job id": (r) => Boolean(safeJson(r, "id")),
     });
   }
 
-  sleep(1);
+  sleep(envFloat("SLEEP_SECONDS", 1));
 }

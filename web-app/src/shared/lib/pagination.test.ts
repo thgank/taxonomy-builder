@@ -21,6 +21,29 @@ test("normalizePage fills missing values with defaults", () => {
   });
 });
 
+test("normalizePage preserves explicit false and numeric values", () => {
+  assert.deepEqual(
+    normalizePage({
+      content: ["item"],
+      first: false,
+      last: false,
+      empty: false,
+      number: 2,
+    }),
+    {
+      content: ["item"],
+      totalElements: 0,
+      totalPages: 0,
+      number: 2,
+      size: 0,
+      numberOfElements: 0,
+      first: false,
+      last: false,
+      empty: false,
+    },
+  );
+});
+
 test("getPaginationFromSearchParams parses valid values and sort arrays", () => {
   const result = getPaginationFromSearchParams(
     {
@@ -35,6 +58,21 @@ test("getPaginationFromSearchParams parses valid values and sort arrays", () => 
     page: 2,
     size: 25,
     sort: ["createdAt,desc", "name,asc"],
+  });
+});
+
+test("getPaginationFromSearchParams accepts scalar sort and missing page values", () => {
+  const result = getPaginationFromSearchParams(
+    {
+      sort: "createdAt,desc",
+    },
+    { page: 3, size: 15 },
+  );
+
+  assert.deepEqual(result, {
+    page: 3,
+    size: 15,
+    sort: ["createdAt,desc"],
   });
 });
 

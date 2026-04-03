@@ -10,8 +10,11 @@
     "plugins": []
   },
   "include": [
-    "src/shared/lib/*.ts",
-    "src/shared/lib/*.test.ts"
+    "src/shared/**/*.ts",
+    "src/shared/**/*.tsx",
+    "src/entities/**/*.ts",
+    "src/features/**/*.ts",
+    "test/**/*.ts"
   ],
   "exclude": [
     "node_modules",

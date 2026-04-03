@@ -22,3 +22,8 @@ test("toUnknownRecordArray filters out non-object items", () => {
     [{ id: 1 }, { id: 2, active: true }],
   );
 });
+
+test("toUnknownRecordArray returns empty array for non-arrays", () => {
+  assert.deepEqual(toUnknownRecordArray(undefined), []);
+  assert.deepEqual(toUnknownRecordArray({ id: 1 }), []);
+});
