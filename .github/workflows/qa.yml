@@ -189,11 +189,22 @@ jobs:
               cat qa/e2e-results/api-service.log
               exit 1
             fi
-            if curl -fsS http://localhost:8080/actuator/health > qa/e2e-results/health.json; then
+            status_code="$(curl -sS -o qa/e2e-results/health.json -w '%{http_code}' http://localhost:8080/actuator/health || true)"
+            if [ "${status_code}" = "200" ]; then
               exit 0
+            fi
+            if [ -s qa/e2e-results/health.json ]; then
+              echo "Attempt ${attempt}: /actuator/health returned HTTP ${status_code}"
+              cat qa/e2e-results/health.json
+            else
+              echo "Attempt ${attempt}: /actuator/health not reachable yet"
             fi
             sleep 2
           done
+          echo "API health check timed out"
+          if [ -s qa/e2e-results/health.json ]; then
+            cat qa/e2e-results/health.json
+          fi
           cat qa/e2e-results/api-service.log
           exit 1
 
