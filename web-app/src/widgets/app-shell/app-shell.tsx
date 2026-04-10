@@ -130,10 +130,6 @@ export function AppShell({ children }: AppShellProps) {
                   </p>
                 </div>
               </div>
-              <p className="text-sm leading-6 text-[color:var(--color-muted)]">
-                A calm workspace for shaping collections and turning raw material into navigable
-                knowledge.
-              </p>
             </div>
 
             <div className="space-y-3">

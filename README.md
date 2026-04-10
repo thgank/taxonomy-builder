@@ -106,7 +106,8 @@ docker compose -f docker-compose.perf.yml up -d
 
 Скрипт:
 
-- гоняет `collections-browse-load`, `job-status-load`, `job-create-burst`, `mixed-workflow-load`
+- сначала прогоняет smoke-проверки `core-api-smoke` и `auth-negative-smoke`
+- затем гоняет `collections-browse-load`, `job-status-load`, `job-create-burst`, `mixed-workflow-load`
 - автоматически вытаскивает `JOB_ID` и `TAXONOMY_ID` из Docker-контейнера PostgreSQL, если ты не передал их вручную
 - пишет summary-файлы в `qa/k6-results/<run_label>/`
 - отправляет таймсерии в InfluxDB с тегами `env`, `script`, `run_id`, `p95_target`, `failure_target`

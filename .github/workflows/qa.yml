@@ -228,18 +228,19 @@ jobs:
         env:
           API_KEY: dev-api-key-change-me
         run: |
-          collection_response="$(curl -sS -X POST http://localhost:8080/api/collections \
+          collection_response="$(curl -fsS -X POST http://localhost:8080/api/collections \
             -H "X-API-Key: ${API_KEY}" \
             -H "Content-Type: application/json" \
             -d '{"name":"qa-k6-load-seed","description":"Seed collection for CI k6 runs"}')"
           collection_id="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])' <<<"${collection_response}")"
 
-          job_response="$(curl -sS -X POST http://localhost:8080/api/collections/${collection_id}/jobs \
+          job_response="$(curl -fsS -X POST http://localhost:8080/api/collections/${collection_id}/jobs \
             -H "X-API-Key: ${API_KEY}" \
             -H "Content-Type: application/json" \
             -d '{"type":"FULL_PIPELINE","params":{"method_term_extraction":"both","method_taxonomy":"hybrid","max_terms":120,"min_freq":1,"similarity_threshold":0.55,"chunk_size":1000,"max_depth":6}}')"
-          job_id="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])' <<<"${job_response}")"
-          taxonomy_id="$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("taxonomyVersionId") or "")' <<<"${job_response}")"
+          job_row="$(docker exec taxonomy-postgres-dev psql -U taxonomy -d taxonomy -At -F '|' -c \"SELECT id, COALESCE(taxonomy_version_id::text, '') FROM jobs WHERE collection_id = '${collection_id}' ORDER BY created_at DESC LIMIT 1;\")"
+          job_id="${job_row%%|*}"
+          taxonomy_id="${job_row#*|}"
 
           echo "JOB_ID=${job_id}" >> "$GITHUB_ENV"
           echo "TAXONOMY_ID=${taxonomy_id}" >> "$GITHUB_ENV"

@@ -16,6 +16,8 @@ export const options = {
   },
 };
 
+const taxonomyId = __ENV.TAXONOMY_ID || "";
+
 function maybeCreateCollection() {
   const shouldCreate = (__ITER + __VU) % 3 === 0;
   if (!shouldCreate) {
