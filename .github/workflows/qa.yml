@@ -224,6 +224,83 @@ jobs:
             -e BASE_URL=http://host.docker.internal:8080 \
             qa/k6/auth-negative-smoke.js | tee qa/e2e-results/auth-negative-smoke.log
 
+      - name: Seed k6 load context
+        env:
+          API_KEY: dev-api-key-change-me
+        run: |
+          collection_response="$(curl -sS -X POST http://localhost:8080/api/collections \
+            -H "X-API-Key: ${API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d '{"name":"qa-k6-load-seed","description":"Seed collection for CI k6 runs"}')"
+          collection_id="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])' <<<"${collection_response}")"
+
+          job_response="$(curl -sS -X POST http://localhost:8080/api/collections/${collection_id}/jobs \
+            -H "X-API-Key: ${API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d '{"type":"FULL_PIPELINE","params":{"method_term_extraction":"both","method_taxonomy":"hybrid","max_terms":120,"min_freq":1,"similarity_threshold":0.55,"chunk_size":1000,"max_depth":6}}')"
+          job_id="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])' <<<"${job_response}")"
+          taxonomy_id="$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("taxonomyVersionId") or "")' <<<"${job_response}")"
+
+          echo "JOB_ID=${job_id}" >> "$GITHUB_ENV"
+          echo "TAXONOMY_ID=${taxonomy_id}" >> "$GITHUB_ENV"
+
+      - name: Run collections browse load
+        run: |
+          docker run --rm --add-host host.docker.internal:host-gateway -i \
+            -v "$PWD:/work" -w /work grafana/k6 run \
+            -e BASE_URL=http://host.docker.internal:8080 \
+            -e API_KEY=dev-api-key-change-me \
+            -e VUS=8 \
+            -e DURATION=30s \
+            -e SLEEP_SECONDS=0.25 \
+            -e MAX_FAILED_RATE=0.05 \
+            -e P95_MS=1200 \
+            qa/k6/collections-browse-load.js | tee qa/e2e-results/collections-browse-load.log
+
+      - name: Run job status load
+        run: |
+          docker run --rm --add-host host.docker.internal:host-gateway -i \
+            -v "$PWD:/work" -w /work grafana/k6 run \
+            -e BASE_URL=http://host.docker.internal:8080 \
+            -e API_KEY=dev-api-key-change-me \
+            -e JOB_ID="${JOB_ID}" \
+            -e TAXONOMY_ID="${TAXONOMY_ID}" \
+            -e VUS=8 \
+            -e DURATION=45s \
+            -e SLEEP_SECONDS=0.25 \
+            -e MAX_FAILED_RATE=0.05 \
+            -e P95_MS=1000 \
+            qa/k6/job-status-load.js | tee qa/e2e-results/job-status-load.log
+
+      - name: Run job create burst
+        run: |
+          docker run --rm --add-host host.docker.internal:host-gateway -i \
+            -v "$PWD:/work" -w /work grafana/k6 run \
+            -e BASE_URL=http://host.docker.internal:8080 \
+            -e API_KEY=dev-api-key-change-me \
+            -e VUS=4 \
+            -e ITERATIONS=4 \
+            -e MAX_DURATION=60s \
+            -e SLEEP_SECONDS=0.25 \
+            -e MAX_FAILED_RATE=0.15 \
+            -e P95_MS=1800 \
+            qa/k6/job-create-burst.js | tee qa/e2e-results/job-create-burst.log
+
+      - name: Run mixed workflow load
+        run: |
+          docker run --rm --add-host host.docker.internal:host-gateway -i \
+            -v "$PWD:/work" -w /work grafana/k6 run \
+            -e BASE_URL=http://host.docker.internal:8080 \
+            -e API_KEY=dev-api-key-change-me \
+            -e JOB_ID="${JOB_ID}" \
+            -e TAXONOMY_ID="${TAXONOMY_ID}" \
+            -e VUS=10 \
+            -e DURATION=45s \
+            -e SLEEP_SECONDS=0.25 \
+            -e MAX_FAILED_RATE=0.08 \
+            -e P95_MS=1800 \
+            qa/k6/mixed-workflow-load.js | tee qa/e2e-results/mixed-workflow-load.log
+
       - name: Upload E2E artifacts
         if: always()
         uses: actions/upload-artifact@v4

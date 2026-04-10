@@ -58,3 +58,29 @@ export function safeJson(response, selector) {
     return null;
   }
 }
+
+export function jsonBody(response) {
+  try {
+    return response.json();
+  } catch (_) {
+    return null;
+  }
+}
+
+export function jsonItems(response) {
+  const body = jsonBody(response);
+  if (Array.isArray(body)) {
+    return body;
+  }
+
+  if (body && Array.isArray(body.content)) {
+    return body.content;
+  }
+
+  return [];
+}
+
+export function firstJsonItem(response) {
+  const items = jsonItems(response);
+  return items.length > 0 ? items[0] : null;
+}
