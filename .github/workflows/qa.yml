@@ -167,7 +167,6 @@ jobs:
           cache: maven
 
       - name: Start API service
-        working-directory: api-service
         env:
           SPRING_DATASOURCE_URL: jdbc:postgresql://localhost:5432/taxonomy
           SPRING_DATASOURCE_USERNAME: taxonomy
@@ -178,9 +177,9 @@ jobs:
           SPRING_RABBITMQ_PASSWORD: rabbit_secret
           API_KEY: dev-api-key-change-me
         run: |
-          mkdir -p ../qa/e2e-results
-          nohup ./mvnw -B -DskipTests spring-boot:run > ../qa/e2e-results/api-service.log 2>&1 &
-          echo $! > ../qa/e2e-results/api-service.pid
+          mkdir -p qa/e2e-results
+          nohup mvn -B -f api-service/pom.xml -DskipTests spring-boot:run > qa/e2e-results/api-service.log 2>&1 &
+          echo $! > qa/e2e-results/api-service.pid
 
       - name: Wait for API
         run: |
