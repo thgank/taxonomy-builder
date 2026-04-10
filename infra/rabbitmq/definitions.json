@@ -4,6 +4,23 @@
       "name": "/"
     }
   ],
+  "users": [
+    {
+      "name": "taxonomy",
+      "password_hash": "9F3MFao+Z4ZsPSHQ6hZpLrEt2hfIpPawnKHIGJ5P6xyRvX/B",
+      "hashing_algorithm": "rabbit_password_hashing_sha256",
+      "tags": []
+    }
+  ],
+  "permissions": [
+    {
+      "user": "taxonomy",
+      "vhost": "/",
+      "configure": ".*",
+      "write": ".*",
+      "read": ".*"
+    }
+  ],
   "queues": [
     {
       "name": "taxonomy.import",
