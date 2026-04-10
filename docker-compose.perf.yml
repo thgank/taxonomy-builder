@@ -1,0 +1,48 @@
+services:
+  influxdb:
+    image: influxdb:1.8.10
+    container_name: taxonomy-influxdb-perf
+    environment:
+      INFLUXDB_DB: k6
+      INFLUXDB_ADMIN_ENABLED: "true"
+      INFLUXDB_ADMIN_USER: admin
+      INFLUXDB_ADMIN_PASSWORD: admin
+    ports:
+      - "8086:8086"
+    volumes:
+      - influxdb-perf-data:/var/lib/influxdb
+    healthcheck:
+      test: ["CMD", "influx", "-execute", "SHOW DATABASES"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - taxonomy-perf-net
+
+  grafana:
+    image: grafana/grafana:11.0.0
+    container_name: taxonomy-grafana-perf
+    depends_on:
+      influxdb:
+        condition: service_healthy
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_DEFAULT_THEME: dark
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/taxonomy-k6-trending.json
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana-perf-data:/var/lib/grafana
+      - ./infra/perf/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infra/perf/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    networks:
+      - taxonomy-perf-net
+
+volumes:
+  influxdb-perf-data:
+  grafana-perf-data:
+
+networks:
+  taxonomy-perf-net:
+    driver: bridge

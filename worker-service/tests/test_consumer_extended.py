@@ -72,6 +72,40 @@ def test_on_message_terminal_stage_marks_success(monkeypatch):
     channel.basic_ack.assert_called_once_with(delivery_tag=2)
 
 
+def test_on_message_acknowledges_cancelled_job_without_rerouting(monkeypatch):
+    session = MagicMock()
+    channel = MagicMock()
+    method = SimpleNamespace(delivery_tag=5, routing_key="import", exchange="taxonomy")
+    properties = SimpleNamespace(headers={})
+    updates = []
+    events = []
+    monkeypatch.setattr(consumer, "get_session", lambda: session)
+    monkeypatch.setattr(
+        consumer,
+        "update_job_status",
+        lambda session, job_id, status, **kwargs: updates.append((status, kwargs)),
+    )
+    monkeypatch.setattr(
+        consumer,
+        "add_job_event",
+        lambda session, job_id, level, message: events.append((level, message)),
+    )
+    monkeypatch.setattr(consumer, "is_job_cancelled", lambda session, job_id: True)
+
+    consumer._on_message(
+        lambda session, msg: None,
+        channel,
+        method,
+        properties,
+        json.dumps({"jobId": "job-5", "jobType": "FULL_PIPELINE"}).encode(),
+    )
+
+    assert any(status == "RUNNING" for status, _ in updates)
+    assert any("already cancelled" in message for _, message in events)
+    channel.basic_publish.assert_not_called()
+    channel.basic_ack.assert_called_once_with(delivery_tag=5)
+
+
 def test_on_message_retries_when_handler_fails(monkeypatch):
     session = MagicMock()
     channel = MagicMock()
@@ -123,3 +157,30 @@ def test_on_message_sends_to_dlq_after_max_retries(monkeypatch):
     assert releases == ["job-4"]
     assert any(status == "FAILED" and "Max retries exhausted" in kwargs.get("error_message", "") for status, kwargs in updates)
     channel.basic_nack.assert_called_once_with(delivery_tag=4, requeue=False)
+
+
+def test_on_message_retries_unsupported_job_type(monkeypatch):
+    session = MagicMock()
+    channel = MagicMock()
+    method = SimpleNamespace(delivery_tag=6, routing_key="import", exchange="taxonomy")
+    properties = SimpleNamespace(headers={})
+    updates = []
+    monkeypatch.setattr(consumer, "get_session", lambda: session)
+    monkeypatch.setattr(consumer, "add_job_event", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        consumer,
+        "update_job_status",
+        lambda session, job_id, status, **kwargs: updates.append((status, kwargs)),
+    )
+
+    consumer._on_message(
+        lambda session, msg: None,
+        channel,
+        method,
+        properties,
+        json.dumps({"jobId": "job-6", "jobType": "UNSUPPORTED"}).encode(),
+    )
+
+    assert any(status == "RETRYING" and kwargs.get("retry_count") == 1 for status, kwargs in updates)
+    channel.basic_publish.assert_called_once()
+    channel.basic_ack.assert_called_once_with(delivery_tag=6)

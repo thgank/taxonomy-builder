@@ -82,6 +82,53 @@ python -m app.main
 docker compose -f docker-compose.dev.yml down
 ```
 
+### Performance dashboard for k6 trends
+
+Для исторических `k6`-метрик и трендового дашборда в стиле Grafana подними perf-стек
+отдельно от основного приложения:
+
+```bash
+docker compose -f docker-compose.perf.yml up -d
+```
+
+Сервисы будут доступны:
+
+| Сервис | URL |
+|--------|-----|
+| InfluxDB | http://localhost:8086 |
+| Grafana | http://localhost:3000 (`admin` / `admin`) |
+
+Дальше запусти нагрузочные сценарии в InfluxDB:
+
+```bash
+./scripts/run_k6_perf.sh
+```
+
+Скрипт:
+
+- гоняет `collections-browse-load`, `job-status-load`, `job-create-burst`, `mixed-workflow-load`
+- автоматически вытаскивает `JOB_ID` и `TAXONOMY_ID` из Docker-контейнера PostgreSQL, если ты не передал их вручную
+- пишет summary-файлы в `qa/k6-results/<run_label>/`
+- отправляет таймсерии в InfluxDB с тегами `env`, `script`, `run_id`, `p95_target`, `failure_target`
+
+Полезные overrides:
+
+```bash
+BASE_URL=http://localhost:8080 \
+K6_BASE_URL=http://host.docker.internal:8080 \
+INFLUXDB_URL=http://localhost:8086 \
+K6_INFLUXDB_URL=http://host.docker.internal:8086 \
+PERF_ENV=staging \
+POSTGRES_CONTAINER=taxonomy-postgres-dev \
+./scripts/run_k6_perf.sh
+```
+
+Остановить perf-стек:
+
+```bash
+docker compose -f docker-compose.perf.yml down
+```
+
 Примечание по RabbitMQ:
 топология (exchange/queues/bindings) теперь задается через
 `infra/rabbitmq/definitions.json` и поднимается автоматически при старте RabbitMQ.

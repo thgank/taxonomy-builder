@@ -83,8 +83,24 @@ class JobControllerTest {
                         .header("X-API-Key", API_KEY)
                         .with(csrf())
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"params\":{}}"))
+                .content("{\"params\":{}}"))
                 .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void createJob_invalidChunkSize_returns400() throws Exception {
+        UUID collectionId = UUID.randomUUID();
+        when(jobService.create(eq(collectionId), any(CreateJobRequest.class)))
+                .thenThrow(new IllegalArgumentException("chunk_size must be a valid integer"));
+
+        mockMvc.perform(post("/api/collections/{id}/jobs", collectionId)
+                        .header("X-API-Key", API_KEY)
+                        .with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new CreateJobRequest("FULL_PIPELINE", Map.of("chunk_size", "huge")))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("chunk_size must be a valid integer"));
     }
 
     @Test

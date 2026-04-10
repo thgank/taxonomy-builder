@@ -8,6 +8,7 @@
     "start": "next start",
     "test": "tsc -p tsconfig.test.json && node --require ./test/register-alias.cjs --test $(find .test-dist/src -name '*.test.js' -print | sort)",
     "test:coverage": "tsc -p tsconfig.test.json && node --require ./test/register-alias.cjs --experimental-test-coverage --test $(find .test-dist/src -name '*.test.js' -print | sort)",
+    "test:coverage:ci": "node ./scripts/run-coverage-ci.mjs",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "format": "prettier --write .",

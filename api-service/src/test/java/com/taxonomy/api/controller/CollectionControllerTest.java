@@ -72,4 +72,23 @@ class CollectionControllerTest {
         mockMvc.perform(get("/api/collections"))
                 .andExpect(status().isForbidden());
     }
+
+    @Test
+    void invalidApiKey_returns403() throws Exception {
+        mockMvc.perform(get("/api/collections")
+                        .header("X-API-Key", "wrong-key"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void createCollection_blankName_returns400() throws Exception {
+        mockMvc.perform(post("/api/collections")
+                        .header("X-API-Key", API_KEY)
+                        .with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new CreateCollectionRequest("   ", "Financial docs"))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("Validation failed")));
+    }
 }

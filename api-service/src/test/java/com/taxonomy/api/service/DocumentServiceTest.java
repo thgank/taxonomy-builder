@@ -121,6 +121,34 @@ class DocumentServiceTest {
     }
 
     @Test
+    void upload_defaultsMissingContentTypeToOctetStream() throws Exception {
+        UUID collectionId = UUID.randomUUID();
+        var collection = new Collection("Finance", "Docs");
+        var file = new MockMultipartFile(
+                "files",
+                "report.bin",
+                null,
+                "test".getBytes()
+        );
+
+        when(collectionService.getEntity(collectionId)).thenReturn(collection);
+        when(documentRepo.save(any(Document.class))).thenAnswer(invocation -> {
+            var doc = invocation.getArgument(0, Document.class);
+            if (doc.getId() == null) {
+                doc.setId(UUID.randomUUID());
+            }
+            return doc;
+        });
+        when(storageService.store(eq(collectionId), any(UUID.class), eq("report.bin"), same(file)))
+                .thenReturn("uploads/report.bin");
+
+        var result = documentService.upload(collectionId, List.of(file));
+
+        assertEquals(1, result.size());
+        assertEquals("application/octet-stream", result.getFirst().mimeType());
+    }
+
+    @Test
     void findById_andGetEntity_returnDocumentOrThrow() {
         UUID docId = UUID.randomUUID();
         Collection collection = new Collection("Energy", "Docs");

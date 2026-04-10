@@ -1,0 +1,16 @@
+apiVersion: 1
+
+datasources:
+  - name: Taxonomy K6
+    uid: taxonomy-k6-influxdb
+    type: influxdb
+    access: proxy
+    url: http://influxdb:8086
+    database: k6
+    isDefault: true
+    editable: true
+    jsonData:
+      dbName: k6
+      httpMode: GET
+      version: InfluxQL
+      timeInterval: 5s

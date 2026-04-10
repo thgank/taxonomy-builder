@@ -73,7 +73,7 @@ jobs:
             --cov=app \
             --cov-report=xml:reports/coverage.xml \
             --cov-report=term \
-            --cov-fail-under=70 \
+            --cov-fail-under=90 \
             --junitxml=reports/pytest.xml
 
       - name: Upload worker QA artifacts
@@ -120,6 +120,9 @@ jobs:
           npm test > reports/test-output.log 2>&1
           cat reports/test-output.log
 
+      - name: Run coverage gate
+        run: npm run test:coverage:ci
+
       - name: Build app
         run: npm run build
 
@@ -131,3 +134,80 @@ jobs:
           path: |
             web-app/reports
           if-no-files-found: warn
+
+  e2e-smoke:
+    name: E2E Smoke
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Start infrastructure
+        run: docker compose -f docker-compose.dev.yml up -d
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - name: Start API service
+        working-directory: api-service
+        env:
+          SPRING_DATASOURCE_URL: jdbc:postgresql://localhost:5432/taxonomy
+          SPRING_DATASOURCE_USERNAME: taxonomy
+          SPRING_DATASOURCE_PASSWORD: taxonomy_secret
+          SPRING_RABBITMQ_HOST: localhost
+          SPRING_RABBITMQ_PORT: 5672
+          SPRING_RABBITMQ_USERNAME: taxonomy
+          SPRING_RABBITMQ_PASSWORD: rabbit_secret
+          API_KEY: dev-api-key-change-me
+        run: |
+          mkdir -p ../qa/e2e-results
+          nohup ./mvnw -q spring-boot:run > ../qa/e2e-results/api-service.log 2>&1 &
+          echo $! > ../qa/e2e-results/api-service.pid
+
+      - name: Wait for API
+        run: |
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://localhost:8080/actuator/health > qa/e2e-results/health.json; then
+              exit 0
+            fi
+            sleep 2
+          done
+          cat qa/e2e-results/api-service.log
+          exit 1
+
+      - name: Run core API smoke
+        run: |
+          docker run --rm --add-host host.docker.internal:host-gateway -i \
+            -v "$PWD:/work" -w /work grafana/k6 run \
+            -e BASE_URL=http://host.docker.internal:8080 \
+            -e API_KEY=dev-api-key-change-me \
+            -e RUN_JOB=true \
+            qa/k6/core-api-smoke.js | tee qa/e2e-results/core-api-smoke.log
+
+      - name: Run auth negative smoke
+        run: |
+          docker run --rm --add-host host.docker.internal:host-gateway -i \
+            -v "$PWD:/work" -w /work grafana/k6 run \
+            -e BASE_URL=http://host.docker.internal:8080 \
+            qa/k6/auth-negative-smoke.js | tee qa/e2e-results/auth-negative-smoke.log
+
+      - name: Upload E2E artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-smoke-artifacts
+          path: |
+            qa/e2e-results
+          if-no-files-found: warn
+
+      - name: Stop services
+        if: always()
+        run: |
+          if [ -f qa/e2e-results/api-service.pid ]; then
+            kill "$(cat qa/e2e-results/api-service.pid)" || true
+          fi
+          docker compose -f docker-compose.dev.yml down -v

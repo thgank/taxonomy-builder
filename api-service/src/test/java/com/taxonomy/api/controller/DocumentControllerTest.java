@@ -151,4 +151,14 @@ class DocumentControllerTest {
         mockMvc.perform(get("/api/documents/{docId}", UUID.randomUUID()))
                 .andExpect(status().isForbidden());
     }
+
+    @Test
+    void upload_withoutFiles_returns400() throws Exception {
+        UUID collectionId = UUID.randomUUID();
+
+        mockMvc.perform(multipart("/api/collections/{id}/documents:upload", collectionId)
+                        .header("X-API-Key", API_KEY)
+                        .with(csrf()))
+                .andExpect(status().isBadRequest());
+    }
 }
